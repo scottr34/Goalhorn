@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 70;
 	objects = {
 
 /* Begin PBXFileReference section */
@@ -89,7 +89,6 @@
 			);
 			mainGroup = AA0000000000000000000002;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 77;
 			productRefGroup = AA0000000000000000000003 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -247,6 +246,7 @@
 				CODE_SIGN_ENTITLEMENTS = Goalhorn/Goalhorn.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4CWH3W7P5S;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -270,6 +270,7 @@
 				CODE_SIGN_ENTITLEMENTS = Goalhorn/Goalhorn.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4CWH3W7P5S;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
