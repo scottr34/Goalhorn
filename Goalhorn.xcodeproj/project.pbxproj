@@ -10,8 +10,18 @@
 		AA0000000000000000000006 /* Goalhorn.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Goalhorn.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		AA0000000000000000000010 /* Exceptions for "Goalhorn" folder in "Goalhorn" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = AA0000000000000000000005 /* Goalhorn */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		AA0000000000000000000004 /* Goalhorn */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Goalhorn; sourceTree = "<group>"; };
+		AA0000000000000000000004 /* Goalhorn */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (AA0000000000000000000010 /* Exceptions for "Goalhorn" folder in "Goalhorn" target */, ); explicitFileTypes = {}; explicitFolders = (); path = Goalhorn; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
