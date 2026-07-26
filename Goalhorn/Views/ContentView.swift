@@ -20,104 +20,92 @@ struct ContentView: View {
     }
 }
 
-/// The main screen: a giant goal light you tap to score.
+/// The main screen ("1A — Arena Realism"): a caged goal light on a dark radial
+/// field. Tapping anywhere fires the goal horn and runs the ~2.4s light show.
 struct GoalScreen: View {
     @EnvironmentObject private var celebration: CelebrationController
-    @EnvironmentObject private var settings: AppSettings
-    @EnvironmentObject private var audioLibrary: AudioLibrary
+
+    /// Local 2.4s visual window (independent of the longer HomeKit light show).
+    @State private var isFiring = false
+    /// Bumped on each tap to fire the one-shot flash/strobe.
+    @State private var flashTick = 0
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
+        GeometryReader { geo in
+            let domeWidth = min(geo.size.width * 0.72, 300)
+            let s = domeWidth / 198
 
-            VStack(spacing: 28) {
-                Text(celebration.isCelebrating ? "GOOOAL!" : "TAP THE LIGHT")
-                    .font(.system(size: celebration.isCelebrating ? 44 : 26, weight: .heavy, design: .rounded))
-                    .foregroundStyle(celebration.isCelebrating ? .red : .white)
-                    .animation(.spring(duration: 0.35), value: celebration.isCelebrating)
-                    .shadow(color: .red.opacity(celebration.isCelebrating ? 0.8 : 0), radius: 20)
+            ZStack {
+                // Background: radial gradient #232326 (center) -> #08080a (edges).
+                RadialGradient(
+                    gradient: Gradient(colors: [Color(hex: 0x232326), Color(hex: 0x08080A)]),
+                    center: UnitPoint(x: 0.5, y: 0.3),
+                    startRadius: 0,
+                    endRadius: max(geo.size.width, geo.size.height) * 0.75
+                )
+                .ignoresSafeArea()
 
-                Button(action: score) {
-                    BeaconView(active: celebration.isCelebrating)
-                        .frame(maxWidth: 300)
-                        .scaleEffect(celebration.isCelebrating ? 1.05 : 1.0)
-                        .animation(.spring(duration: 0.4), value: celebration.isCelebrating)
+                VStack(spacing: 0) {
+                    Spacer()
+                    GoalLampView(domeWidth: domeWidth, isActive: isFiring, flashTrigger: flashTick)
+                    statusLabel(scale: s)
+                        .padding(.top, 26 * s)
+                    Spacer()
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Trigger goal horn")
-
-                if celebration.isCelebrating {
-                    Button(role: .destructive, action: celebration.stop) {
-                        Label("Stop", systemImage: "stop.fill")
-                            .font(.headline)
-                            .padding(.horizontal, 24)
-                            .padding(.vertical, 10)
-                            .background(.white.opacity(0.12), in: Capsule())
-                    }
-                    .tint(.white)
-                    .transition(.opacity)
-                }
-
-                readinessSummary
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .padding()
+            .contentShape(Rectangle())
+            .onTapGesture { score() }
+            .overlay(alignment: .topTrailing) {
+                settingsGlyph
+                    .padding(.top, 18)
+                    .padding(.trailing, 20)
+            }
         }
     }
 
-    @ViewBuilder
-    private var readinessSummary: some View {
-        VStack(spacing: 8) {
-            if let message = celebration.statusMessage {
-                Text(message)
-                    .font(.footnote)
-                    .foregroundStyle(.orange)
-                    .multilineTextAlignment(.center)
-                    .transition(.opacity)
-            }
-
-            HStack(spacing: 18) {
-                statusChip(
-                    ok: audioLibrary.track(withID: settings.selectedTrackID) != nil || !audioLibrary.tracks.isEmpty,
-                    icon: "music.note",
-                    label: songLabel
-                )
-                statusChip(
-                    ok: !settings.selectedLightIDs.isEmpty,
-                    icon: "lightbulb",
-                    label: "\(settings.selectedLightIDs.count) light\(settings.selectedLightIDs.count == 1 ? "" : "s")"
-                )
-                statusChip(
-                    ok: settings.audioTarget == .phone || settings.sonosDevice != nil,
-                    icon: settings.audioTarget == .phone ? "iphone" : "hifispeaker",
-                    label: settings.audioTarget == .phone ? "iPhone" : (settings.sonosDevice?.roomName ?? "No Sonos")
-                )
-            }
-        }
-        .padding(.top, 8)
-        .animation(.default, value: celebration.statusMessage)
+    private func statusLabel(scale s: CGFloat) -> some View {
+        Text(isFiring ? "GOAL!" : "TAP FOR A GOAL!")
+            .font(.system(size: (isFiring ? 34 : 14) * s, weight: isFiring ? .bold : .medium))
+            .tracking((isFiring ? 3 : 4) * s)
+            .foregroundStyle(isFiring ? Color(hex: 0xFF4D3D) : Color(hex: 0x8A8A90))
+            .shadow(color: isFiring ? Color(hex: 0xFF3C32, alpha: 0.8) : .clear, radius: isFiring ? 18 * s : 0)
+            .animation(.easeInOut(duration: 0.2), value: isFiring)
     }
 
-    private var songLabel: String {
-        if let track = audioLibrary.track(withID: settings.selectedTrackID) { return track.title }
-        if let first = audioLibrary.tracks.first { return first.title }
-        return "No song"
+    /// Top-right equalizer/settings glyph — stub entry to the sound/HomeKit
+    /// picker (navigation intentionally not wired yet).
+    private var settingsGlyph: some View {
+        Button {
+            // TODO: navigate to sound / HomeKit picker screen.
+        } label: {
+            HStack(alignment: .bottom, spacing: 4) {
+                bar(height: 8, color: Color(hex: 0xBBBBBB))
+                bar(height: 14, color: Color(hex: 0xDDDDDD))
+                bar(height: 6, color: Color(hex: 0x999999))
+            }
+            .padding(8)
+            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Settings")
     }
 
-    private func statusChip(ok: Bool, icon: String, label: String) -> some View {
-        VStack(spacing: 4) {
-            Image(systemName: icon)
-                .foregroundStyle(ok ? .green : .secondary)
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
-        .frame(maxWidth: 90)
+    private func bar(height: CGFloat, color: Color) -> some View {
+        RoundedRectangle(cornerRadius: 2).fill(color).frame(width: 4, height: height)
     }
 
     private func score() {
+        guard !isFiring else { return } // debounce repeat taps while active
         UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
-        celebration.triggerGoal()
+        celebration.triggerGoal()       // existing: audio + HomeKit lights
+
+        flashTick += 1
+        isFiring = true
+        // Auto-reset to idle after the 2.4s show.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
+            isFiring = false
+        }
     }
 }
 
