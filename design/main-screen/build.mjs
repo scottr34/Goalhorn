@@ -1,7 +1,14 @@
 // Generates the .dc.html artboards for the Goalhorn main-screen redesign.
 //   node design/main-screen/build.mjs
-// Geometry for the lamp (cage wrap, hoop perspective, chrome banding) is
-// computed here so every artboard stays consistent.
+//
+// The fixture is modelled on the classic rink goal light the user referenced:
+// a TALL vertically-fluted red lens, a thin bright wire guard, and a heavy
+// satin-aluminium base that flares out at the foot. Geometry (flute and cage
+// azimuths, hoop perspective, cylinder shading) is computed here so every
+// artboard stays consistent.
+//
+// No brand marks are reproduced - the reference carries a brewery logo on the
+// mid band; that band is left as plain riveted hardware.
 
 import { writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -9,42 +16,58 @@ import { fileURLToPath } from 'node:url';
 
 const OUT = dirname(fileURLToPath(import.meta.url));
 
-// ---------------------------------------------------------------- utilities
-
 const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
 const toHex = (rgb) =>
   '#' + rgb.map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
 /** Scale a hex colour toward black by factor f (1 = unchanged). */
 const dim = (h, f) => toHex(hex(h).map((v) => v * f));
+const rad = (deg) => (deg * Math.PI) / 180;
 
 // ------------------------------------------------------------ lamp geometry
-// SVG user space: viewBox 0 0 440 420.
-// A rink goal light is SQUAT and wide - the dome is broader than it is tall,
-// sitting on a heavy dark base. Tall and narrow reads as a lantern.
+// SVG user space: viewBox 0 0 440 700.
+//   lens    R=118 about cx=220, hemispherical cap y 40..158, tube y 158..366
+//   guard   R=125, standing proud of the lens
+//   base    four tiers, y 356..654, each a CYLINDER (shaded left-to-right)
+//   camera  eye level y=340, which sets hoop curvature and the tier ellipses
 
 const CX = 220;
-const R_GLASS = 118;
-const R_CAGE = 124;
-const Y_APEX = 86;
-const Y_SHOULDER = 150; // where the domed cap meets the cylinder
-const Y_GLASS_BOT = 258;
-const Y_COLLAR = 248;
-const EYE = 240; // camera height, drives hoop curvature and the collar ellipse
+const R_LENS = 118;
+const R_CAGE = 125;
+const Y_APEX = 40;
+const Y_SHOULDER = 158;
+const Y_LENS_BOT = 406;
+const Y_CAGE_APEX = 34;
+const RV_CAGE = Y_SHOULDER - Y_CAGE_APEX;
+const EYE = 340;
 
-const GLASS_PATH =
-  `M ${CX - R_GLASS},${Y_GLASS_BOT} L ${CX - R_GLASS},${Y_SHOULDER} ` +
-  `A ${R_GLASS},${Y_SHOULDER - Y_APEX} 0 0 1 ${CX + R_GLASS},${Y_SHOULDER} ` +
-  `L ${CX + R_GLASS},${Y_GLASS_BOT} Z`;
+const LENS_PATH =
+  `M ${CX - R_LENS},${Y_LENS_BOT} L ${CX - R_LENS},${Y_SHOULDER} ` +
+  `A ${R_LENS},${Y_SHOULDER - Y_APEX} 0 0 1 ${CX + R_LENS},${Y_SHOULDER} ` +
+  `L ${CX + R_LENS},${Y_LENS_BOT} Z`;
 
-// Vertical cage bars sit at even angles around the cylinder, so on screen they
-// bunch toward the silhouette (x = R sin0) and foreshorten (w = w0 cos0).
-// That cosine spacing is what makes a cage read as wrapped rather than printed.
-const Y_CAGE_APEX = 82;
-const RV_CAGE = Y_SHOULDER - Y_CAGE_APEX; // vertical semi-axis of the cage cap
-const PHI_RING = Math.asin(19 / R_CAGE); // where the bars meet the top hub
-const RING_TILT = 4; // how much the hub's near edge rides up (we look up at it)
+// --- vertical flutes -------------------------------------------------------
+// The lens is a fluted Fresnel cylinder. Flutes are evenly spaced in ANGLE, so
+// on screen they bunch toward the silhouette exactly like the guard wires do.
+// This is the strongest single cue that the red thing is glass and not a shape.
+const FLUTE_TOP = Y_SHOULDER - 30;
+const FLUTE_H = Y_LENS_BOT - FLUTE_TOP;
+const FLUTES = [];
+for (let deg = -84; deg <= 84; deg += 8) {
+  const c = Math.cos(rad(deg));
+  FLUTES.push({
+    groove: +(CX + R_LENS * Math.sin(rad(deg))).toFixed(2),
+    gw: +Math.max(0.9, 2.6 * c).toFixed(2),
+    ridge: +(CX + R_LENS * Math.sin(rad(deg + 4))).toFixed(2),
+    rw: +Math.max(0.9, 3.1 * c).toFixed(2),
+  });
+}
 
-/** A point on the cage meridian at azimuth t, polar angle phi from the apex. */
+// --- guard wires -----------------------------------------------------------
+const PHI_RING = Math.asin(20 / R_CAGE);
+const RING_TILT = 5;
+const RING_CY = +(Y_CAGE_APEX + RV_CAGE * (1 - Math.cos(PHI_RING))).toFixed(2);
+
+/** A point on the guard meridian at azimuth t, polar angle phi from the apex. */
 function meridian(t, phi) {
   return [
     CX + R_CAGE * Math.sin(phi) * Math.sin(t),
@@ -52,50 +75,49 @@ function meridian(t, phi) {
   ];
 }
 
-const RING_CY = +(Y_CAGE_APEX + RV_CAGE * (1 - Math.cos(PHI_RING))).toFixed(2);
-const RING_RX = +(R_CAGE * Math.sin(PHI_RING)).toFixed(2);
-
 const BAR_ANGLES = [0, 20, -20, 40, -40, 60, -60, 80, -80];
 const BARS = BAR_ANGLES.map((deg, i) => {
-  const t = (deg * Math.PI) / 180;
+  const t = rad(deg);
   const x = +(CX + R_CAGE * Math.sin(t)).toFixed(2);
-  const k = Math.abs(Math.cos(t)); // how square-on this bar faces us
-  const w = +(6.2 * (0.3 + 0.7 * k)).toFixed(2);
-  // Over the cap the bar is the projected meridian, so it hugs the dome instead
-  // of bowing out past the silhouette.
+  const k = Math.abs(Math.cos(t)); // how square-on this wire faces us
+  const w = +(6.4 * (0.32 + 0.68 * k)).toFixed(2);
+  let d = `M ${x},414 L ${x},${Y_SHOULDER - 2}`;
   const steps = 8;
-  let d = `M ${x},262 L ${x},${Y_SHOULDER - 2}`;
   for (let j = 1; j <= steps; j++) {
-    const phi = (Math.PI / 2) + (PHI_RING - Math.PI / 2) * (j / steps);
+    const phi = Math.PI / 2 + (PHI_RING - Math.PI / 2) * (j / steps);
     const [px, py] = meridian(t, phi);
     d += ` L ${px.toFixed(2)},${py.toFixed(2)}`;
   }
   return { id: `bar${i}`, x, w, k, d };
 });
 
-// Horizontal hoops. A hoop above eye level shows its near half as the TOP of the
-// projected ellipse (bulges up); below eye level the near half sags down.
-// Cap hoops are narrower because the dome has already started closing in.
-const HOOPS = [
-  { y: 118, cap: true },
-  { y: 188, cap: false },
-  { y: 232, cap: false },
-].map((h, i) => {
-  const halfW = h.cap
-    ? R_CAGE * Math.sqrt(Math.max(0, 1 - ((Y_SHOULDER - h.y) / (Y_SHOULDER - Y_APEX)) ** 2))
-    : R_CAGE + 6;
-  const rise = ((EYE - h.y) / 80) * 10;
-  const c = +(h.y - 2 * rise).toFixed(1);
-  const cBack = +(h.y + 2 * rise).toFixed(1);
-  const x0 = +(CX - halfW).toFixed(1);
-  const x1 = +(CX + halfW).toFixed(1);
+// A hoop above eye level shows its near half as the TOP of the projected
+// ellipse (bulges up); below eye level the near half sags down.
+const HOOPS = [84, 132, 206, 282, 358].map((y, i) => {
+  const dy = Y_SHOULDER - y;
+  const halfW = dy > 0 ? R_CAGE * Math.sqrt(Math.max(0, 1 - (dy / RV_CAGE) ** 2)) : R_CAGE + 6;
+  const rise = ((EYE - y) / 300) * 13;
   return {
     id: `hoop${i}`,
-    y: h.y,
-    front: `M ${x0},${h.y} Q ${CX},${c} ${x1},${h.y}`,
-    back: `M ${x0},${h.y} Q ${CX},${cBack} ${x1},${h.y}`,
+    y,
+    front: `M ${(CX - halfW).toFixed(1)},${y} Q ${CX},${(y - 2 * rise).toFixed(1)} ${(CX + halfW).toFixed(1)},${y}`,
+    back: `M ${(CX - halfW).toFixed(1)},${y} Q ${CX},${(y + 2 * rise).toFixed(1)} ${(CX + halfW).toFixed(1)},${y}`,
   };
 });
+
+// --- base tiers ------------------------------------------------------------
+// Each tier is a cylinder, so it is shaded ACROSS (dark edge, bright band,
+// bounce on the far side) - a top-to-bottom ramp would read as a flat slab.
+const T = {
+  collar: { x: 90, w: 260, y: 396, h: 36 },
+  body: { x: 96, w: 248, y: 430, h: 96 },
+  band: { x: 88, w: 264, y: 522, h: 96 },
+  skirtTopY: 614,
+  skirtBotY: 674,
+  skirtBotX: 54,
+  skirtBotW: 332,
+  lip: { x: 50, w: 340, y: 670, h: 24 },
+};
 
 // ------------------------------------------------------------------- defs
 
@@ -103,225 +125,240 @@ function defs() {
   const barGrads = BARS.map((b) => {
     const k = b.k;
     const stops = [
-      [0, '#101014', 1],
-      [0.18, '#55555e', 0.62 + 0.38 * k],
-      [0.4, '#c6c6cf', 0.55 + 0.45 * k],
-      [0.58, '#7c7c86', 0.58 + 0.42 * k],
-      [0.8, '#2e2e35', 0.7 + 0.3 * k],
-      [1, '#0b0b0e', 1],
+      [0, '#161513', 1],
+      [0.16, '#6a655c', 0.6 + 0.4 * k],
+      [0.38, '#e8e2d5', 0.55 + 0.45 * k],
+      [0.56, '#a49d92', 0.58 + 0.42 * k],
+      [0.78, '#48453f', 0.7 + 0.3 * k],
+      [1, '#121110', 1],
     ]
       .map(([o, c, f]) => `<stop offset="${o}" stop-color="${dim(c, f)}"></stop>`)
       .join('');
     return `<linearGradient id="g_${b.id}" gradientUnits="userSpaceOnUse" x1="${(b.x - b.w / 2).toFixed(2)}" y1="0" x2="${(b.x + b.w / 2).toFixed(2)}" y2="0">${stops}</linearGradient>`;
   }).join('');
 
-  const hoopFade =
-    `<linearGradient id="gHoopFade" gradientUnits="userSpaceOnUse" x1="${CX - R_CAGE - 6}" y1="0" x2="${CX + R_CAGE + 6}" y2="0">` +
-    `<stop offset="0" stop-color="#08080b" stop-opacity="0.85"></stop>` +
-    `<stop offset="0.2" stop-color="#08080b" stop-opacity="0.25"></stop>` +
-    `<stop offset="0.5" stop-color="#08080b" stop-opacity="0"></stop>` +
-    `<stop offset="0.8" stop-color="#08080b" stop-opacity="0.25"></stop>` +
-    `<stop offset="1" stop-color="#08080b" stop-opacity="0.85"></stop>` +
-    `</linearGradient>`;
-
   const hoopGrads = HOOPS.map(
     (h) =>
-      `<linearGradient id="g_${h.id}" gradientUnits="userSpaceOnUse" x1="0" y1="${h.y - 3.6}" x2="0" y2="${h.y + 3.6}">` +
-      `<stop offset="0" stop-color="#141419"></stop>` +
-      `<stop offset="0.3" stop-color="#b9b9c2"></stop>` +
-      `<stop offset="0.54" stop-color="#6b6b75"></stop>` +
-      `<stop offset="0.78" stop-color="#2f2f36"></stop>` +
-      `<stop offset="1" stop-color="#0d0d11"></stop>` +
+      `<linearGradient id="g_${h.id}" gradientUnits="userSpaceOnUse" x1="0" y1="${h.y - 3.4}" x2="0" y2="${h.y + 3.4}">` +
+      `<stop offset="0" stop-color="#171614"></stop>` +
+      `<stop offset="0.3" stop-color="#ded8cb"></stop>` +
+      `<stop offset="0.55" stop-color="#8e8880"></stop>` +
+      `<stop offset="0.8" stop-color="#3c3a35"></stop>` +
+      `<stop offset="1" stop-color="#131211"></stop>` +
       `</linearGradient>`
   ).join('');
 
-  return `<defs>
-  <clipPath id="clipGlass"><path d="${GLASS_PATH}"></path></clipPath>
+  // Satin aluminium, shaded as a cylinder: key highlight left of centre, a dark
+  // turn, then a weaker bounce off the room on the right.
+  const metal = (id, f) =>
+    `<linearGradient id="${id}" x1="0" y1="0" x2="1" y2="0">` +
+    [
+      [0, '#3f3b35'],
+      [0.06, '#6b665d'],
+      [0.22, '#cec8ba'],
+      [0.34, '#b3ada0'],
+      [0.5, '#8d887e'],
+      [0.68, '#615d56'],
+      [0.85, '#9c978c'],
+      [1, '#3a3731'],
+    ]
+      .map(([o, c]) => `<stop offset="${o}" stop-color="${dim(c, f)}"></stop>`)
+      .join('') +
+    `</linearGradient>`;
 
-  <!-- Glass, unlit: deep cherry, nearly black at the rim. -->
-  <radialGradient id="gGlass" cx="0.4" cy="0.3" r="0.86">
-    <stop offset="0" stop-color="#8f1a17"></stop>
-    <stop offset="0.32" stop-color="#5c0e0c"></stop>
-    <stop offset="0.64" stop-color="#350706"></stop>
-    <stop offset="1" stop-color="#150202"></stop>
+  return `<defs>
+  <clipPath id="clipLens"><path d="${LENS_PATH}"></path></clipPath>
+  <linearGradient id="gFluteFade" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#fff" stop-opacity="0"></stop>
+    <stop offset="0.24" stop-color="#fff" stop-opacity="1"></stop>
+    <stop offset="1" stop-color="#fff" stop-opacity="1"></stop>
+  </linearGradient>
+  <mask id="fluteMask"><rect x="102" y="${FLUTE_TOP}" width="236" height="${FLUTE_H}" fill="url(#gFluteFade)"></rect></mask>
+
+  <!-- Lens, unlit: deep cherry, near-black where it turns away. -->
+  <radialGradient id="gGlass" cx="0.4" cy="0.3" r="0.9">
+    <stop offset="0" stop-color="#a51e19"></stop>
+    <stop offset="0.3" stop-color="#78100e"></stop>
+    <stop offset="0.62" stop-color="#450807"></stop>
+    <stop offset="1" stop-color="#1c0303"></stop>
   </radialGradient>
-  <!-- Glass, lit: blown out around the lamp, which sits LOW in the dome. -->
-  <radialGradient id="gHot" cx="0.5" cy="0.62" r="0.98">
-    <stop offset="0" stop-color="#fff6f1"></stop>
-    <stop offset="0.13" stop-color="#ff9e7c"></stop>
-    <stop offset="0.38" stop-color="#ff2c14"></stop>
-    <stop offset="0.7" stop-color="#b00604"></stop>
-    <stop offset="1" stop-color="#4e0000"></stop>
+  <!-- Lens, lit: the lamp fills the tube and blows out low-centre. -->
+  <radialGradient id="gHot" cx="0.5" cy="0.6" r="0.95">
+    <stop offset="0" stop-color="#fff5ef"></stop>
+    <stop offset="0.12" stop-color="#ffa082"></stop>
+    <stop offset="0.36" stop-color="#ff2a12"></stop>
+    <stop offset="0.68" stop-color="#c00806"></stop>
+    <stop offset="1" stop-color="#5c0100"></stop>
   </radialGradient>
   <!-- Cylinder form: the left-right falloff that makes a tube read as a tube. -->
   <linearGradient id="gCyl" x1="0" y1="0" x2="1" y2="0">
-    <stop offset="0" stop-color="#000" stop-opacity="0.78"></stop>
-    <stop offset="0.14" stop-color="#000" stop-opacity="0.28"></stop>
-    <stop offset="0.36" stop-color="#fff" stop-opacity="0.07"></stop>
-    <stop offset="0.62" stop-color="#000" stop-opacity="0.12"></stop>
-    <stop offset="0.87" stop-color="#000" stop-opacity="0.62"></stop>
-    <stop offset="1" stop-color="#000" stop-opacity="0.84"></stop>
+    <stop offset="0" stop-color="#000" stop-opacity="0.74"></stop>
+    <stop offset="0.13" stop-color="#000" stop-opacity="0.24"></stop>
+    <stop offset="0.34" stop-color="#fff" stop-opacity="0.08"></stop>
+    <stop offset="0.6" stop-color="#000" stop-opacity="0.12"></stop>
+    <stop offset="0.86" stop-color="#000" stop-opacity="0.6"></stop>
+    <stop offset="1" stop-color="#000" stop-opacity="0.82"></stop>
   </linearGradient>
   <linearGradient id="gCapDark" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0" stop-color="#000" stop-opacity="0.34"></stop>
-    <stop offset="0.2" stop-color="#000" stop-opacity="0"></stop>
-    <stop offset="0.82" stop-color="#000" stop-opacity="0"></stop>
-    <stop offset="1" stop-color="#000" stop-opacity="0.42"></stop>
+    <stop offset="0" stop-color="#000" stop-opacity="0.3"></stop>
+    <stop offset="0.16" stop-color="#000" stop-opacity="0"></stop>
+    <stop offset="0.88" stop-color="#000" stop-opacity="0"></stop>
+    <stop offset="1" stop-color="#000" stop-opacity="0.5"></stop>
   </linearGradient>
-  <radialGradient id="gSpec"><stop offset="0" stop-color="#fff" stop-opacity="0.46"></stop><stop offset="0.55" stop-color="#fff" stop-opacity="0.12"></stop><stop offset="1" stop-color="#fff" stop-opacity="0"></stop></radialGradient>
-  <radialGradient id="gSpecCap"><stop offset="0" stop-color="#fff" stop-opacity="0.3"></stop><stop offset="1" stop-color="#fff" stop-opacity="0"></stop></radialGradient>
-  <radialGradient id="gShadow"><stop offset="0" stop-color="#000" stop-opacity="0.75"></stop><stop offset="0.55" stop-color="#000" stop-opacity="0.3"></stop><stop offset="1" stop-color="#000" stop-opacity="0"></stop></radialGradient>
+  <radialGradient id="gSpec"><stop offset="0" stop-color="#fff" stop-opacity="0.42"></stop><stop offset="0.55" stop-color="#fff" stop-opacity="0.11"></stop><stop offset="1" stop-color="#fff" stop-opacity="0"></stop></radialGradient>
+  <radialGradient id="gSpecCap"><stop offset="0" stop-color="#fff" stop-opacity="0.34"></stop><stop offset="1" stop-color="#fff" stop-opacity="0"></stop></radialGradient>
+  <radialGradient id="gShadow"><stop offset="0" stop-color="#000" stop-opacity="0.75"></stop><stop offset="0.55" stop-color="#000" stop-opacity="0.28"></stop><stop offset="1" stop-color="#000" stop-opacity="0"></stop></radialGradient>
+  <radialGradient id="gColumn"><stop offset="0" stop-color="#fff2e8" stop-opacity="0.85"></stop><stop offset="0.55" stop-color="#ff7a4a" stop-opacity="0.3"></stop><stop offset="1" stop-color="#ff4a1e" stop-opacity="0"></stop></radialGradient>
 
-  <!-- Machined steel collar: catches the lamp, so it stays the brightest metal. -->
-  <linearGradient id="gCollar" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0" stop-color="#5f5f69"></stop>
-    <stop offset="0.16" stop-color="#9a9aa4"></stop>
-    <stop offset="0.4" stop-color="#3b3b43"></stop>
-    <stop offset="0.58" stop-color="#1d1d23"></stop>
-    <stop offset="0.8" stop-color="#565660"></stop>
-    <stop offset="1" stop-color="#232329"></stop>
-  </linearGradient>
-  <!-- Cast housing: dark gunmetal with one bright top edge, not white plastic. -->
-  <linearGradient id="gHousing" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0" stop-color="#3f3f47"></stop>
-    <stop offset="0.08" stop-color="#5e5e69"></stop>
-    <stop offset="0.3" stop-color="#212127"></stop>
-    <stop offset="0.5" stop-color="#15151a"></stop>
-    <stop offset="0.66" stop-color="#101014"></stop>
-    <stop offset="0.85" stop-color="#2b2b33"></stop>
-    <stop offset="1" stop-color="#101014"></stop>
-  </linearGradient>
-  <linearGradient id="gFoot" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0" stop-color="#43434b"></stop>
-    <stop offset="0.28" stop-color="#232329"></stop>
-    <stop offset="0.56" stop-color="#0f0f13"></stop>
-    <stop offset="0.82" stop-color="#282830"></stop>
-    <stop offset="1" stop-color="#08080b"></stop>
-  </linearGradient>
-  <radialGradient id="gCrown" cx="0.34" cy="0.26">
-    <stop offset="0" stop-color="#a6a6b0"></stop>
-    <stop offset="0.45" stop-color="#4a4a53"></stop>
-    <stop offset="1" stop-color="#131318"></stop>
+  ${metal('gMetal', 1)}
+  ${metal('gMetalHi', 1.12)}
+  ${metal('gMetalLo', 0.78)}
+  <radialGradient id="gRivet" cx="0.34" cy="0.3">
+    <stop offset="0" stop-color="#e4ded1"></stop>
+    <stop offset="0.5" stop-color="#8e8980"></stop>
+    <stop offset="1" stop-color="#33302b"></stop>
   </radialGradient>
+  <linearGradient id="gRing" gradientUnits="userSpaceOnUse" x1="0" y1="${RING_CY - 8}" x2="0" y2="${RING_CY + 8}">
+    <stop offset="0" stop-color="#cac4b7"></stop>
+    <stop offset="0.4" stop-color="#7d786f"></stop>
+    <stop offset="1" stop-color="#26241f"></stop>
+  </linearGradient>
+  <linearGradient id="gHoopFade" gradientUnits="userSpaceOnUse" x1="${CX - R_CAGE - 6}" y1="0" x2="${CX + R_CAGE + 6}" y2="0">
+    <stop offset="0" stop-color="#0a0908" stop-opacity="0.85"></stop>
+    <stop offset="0.2" stop-color="#0a0908" stop-opacity="0.25"></stop>
+    <stop offset="0.5" stop-color="#0a0908" stop-opacity="0"></stop>
+    <stop offset="0.8" stop-color="#0a0908" stop-opacity="0.25"></stop>
+    <stop offset="1" stop-color="#0a0908" stop-opacity="0.85"></stop>
+  </linearGradient>
 
   <filter id="fb3" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="3"></feGaussianBlur></filter>
   <filter id="fb6" x="-45%" y="-45%" width="190%" height="190%"><feGaussianBlur stdDeviation="6"></feGaussianBlur></filter>
-  <filter id="fb14" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="14"></feGaussianBlur></filter>
+  <filter id="fb18" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="18"></feGaussianBlur></filter>
   <filter id="grainF"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="3" stitchTiles="stitch"></feTurbulence></filter>
-  <linearGradient id="gRing" gradientUnits="userSpaceOnUse" x1="0" y1="${RING_CY - 8}" x2="0" y2="${RING_CY + 8}">
-    <stop offset="0" stop-color="#6e6e79"></stop>
-    <stop offset="0.3" stop-color="#3a3a43"></stop>
-    <stop offset="0.7" stop-color="#1c1c22"></stop>
-    <stop offset="1" stop-color="#0c0c10"></stop>
-  </linearGradient>
-  ${barGrads}${hoopGrads}${hoopFade}
+  ${barGrads}${hoopGrads}
 </defs>`;
 }
 
 // -------------------------------------------------------------- lamp markup
 
-function fresnelRibs() {
-  let out = '';
-  for (let y = Y_APEX + 4; y < Y_GLASS_BOT - 3; y += 11) {
-    out += `<rect x="98" y="${y}" width="244" height="4.2" fill="#fff" opacity="0.11"></rect>`;
-    out += `<rect x="98" y="${y + 4.8}" width="244" height="2.2" fill="#000" opacity="0.36"></rect>`;
-  }
-  return `<g clip-path="url(#clipGlass)">${out}</g>`;
+function flutes() {
+  const out = FLUTES.map(
+    (f) =>
+      `<rect x="${(f.ridge - f.rw / 2).toFixed(2)}" y="${FLUTE_TOP}" width="${f.rw}" height="${FLUTE_H}" fill="#fff" opacity="0.16"></rect>` +
+      `<rect x="${(f.groove - f.gw / 2).toFixed(2)}" y="${FLUTE_TOP}" width="${f.gw}" height="${FLUTE_H}" fill="#1a0000" opacity="0.36"></rect>`
+  ).join('');
+  return `<g mask="url(#fluteMask)">${out}</g>`;
 }
 
 function cage() {
-  const barPaths = (stroke, extra) =>
+  const barPaths = (stroke) =>
     BARS.map(
       (b) =>
-        `<path d="${b.d}" fill="none" stroke="${stroke === null ? `url(#g_${b.id})` : stroke}" stroke-width="${b.w}" stroke-linecap="round"${extra || ''}></path>`
+        `<path d="${b.d}" fill="none" stroke="${stroke === null ? `url(#g_${b.id})` : stroke}" stroke-width="${b.w}" stroke-linecap="round"></path>`
     ).join('');
   const hoopPaths = (stroke) =>
     HOOPS.map(
       (h) =>
-        `<path d="${h.front}" fill="none" stroke="${stroke === null ? `url(#g_${h.id})` : stroke}" stroke-width="5.6" stroke-linecap="round"></path>`
+        `<path d="${h.front}" fill="none" stroke="${stroke === null ? `url(#g_${h.id})` : stroke}" stroke-width="6" stroke-linecap="round"></path>`
     ).join('');
 
   return `<g class="cage">
-    <g clip-path="url(#clipGlass)" transform="translate(2,3)" filter="url(#fb6)" opacity="0.16">
+    <g clip-path="url(#clipLens)" transform="translate(2,3)" filter="url(#fb6)" opacity="0.18">
       ${barPaths('#000')}${hoopPaths('#000')}
     </g>
     ${hoopPaths(null)}
     ${hoopPaths('url(#gHoopFade)')}
     ${barPaths(null)}
-    <ellipse cx="${CX}" cy="${RING_CY}" rx="${(+RING_RX + 3).toFixed(1)}" ry="7" fill="url(#gRing)"></ellipse>
-    <path d="M ${CX - 13},${RING_CY - 3} A 14,7 0 0 1 ${CX + 12},${RING_CY - 4}" fill="none" stroke="#c6c6d0" stroke-opacity="0.5" stroke-width="1.6"></path>
+    <ellipse cx="${CX}" cy="${RING_CY}" rx="24" ry="8" fill="url(#gRing)"></ellipse>
+    <path d="M ${CX - 15},${RING_CY - 4} A 16,8 0 0 1 ${CX + 14},${RING_CY - 5}" fill="none" stroke="#efe9dc" stroke-opacity="0.55" stroke-width="1.8"></path>
     <g class="spill" style="mix-blend-mode:screen">${barPaths('#ff5330')}${hoopPaths('#ff5330')}</g>
+  </g>`;
+}
+
+function base() {
+  const rivets = Array.from({ length: 9 }, (_, i) => {
+    const x = T.band.x + 22 + (i * (T.band.w - 44)) / 8;
+    return `<circle cx="${x.toFixed(1)}" cy="${T.band.y + 15}" r="4.6" fill="url(#gRivet)"></circle>`;
+  }).join('');
+
+  return `<g class="housing">
+    <!-- guard seat -->
+    <rect x="${T.collar.x}" y="${T.collar.y}" width="${T.collar.w}" height="${T.collar.h}" rx="3" fill="url(#gMetalHi)"></rect>
+    <ellipse cx="${CX}" cy="${T.collar.y + 2}" rx="${T.collar.w / 2}" ry="7" fill="url(#gMetal)"></ellipse>
+    <rect x="${T.collar.x}" y="${T.collar.y + T.collar.h - 3}" width="${T.collar.w}" height="3" fill="#1d1b18" opacity="0.6"></rect>
+
+    <!-- upper body with its raised boss and vent slot -->
+    <rect x="${T.body.x}" y="${T.body.y}" width="${T.body.w}" height="${T.body.h}" rx="2" fill="url(#gMetal)"></rect>
+    <rect x="${T.body.x}" y="${T.body.y}" width="${T.body.w}" height="2.5" fill="#e6e0d2" opacity="0.35"></rect>
+    <rect x="132" y="456" width="176" height="30" rx="15" fill="url(#gMetalHi)"></rect>
+    <rect x="132" y="456" width="176" height="30" rx="15" fill="none" stroke="#211f1b" stroke-opacity="0.45"></rect>
+    <rect x="150" y="465" width="92" height="11" rx="5.5" fill="#141311" opacity="0.82"></rect>
+    <rect x="150" y="465" width="92" height="4" rx="2" fill="#000" opacity="0.5"></rect>
+    <rect x="${T.body.x}" y="${T.body.y + T.body.h - 3}" width="${T.body.w}" height="3" fill="#1d1b18" opacity="0.55"></rect>
+
+    <!-- riveted mid band, left deliberately unbranded -->
+    <rect x="${T.band.x}" y="${T.band.y}" width="${T.band.w}" height="${T.band.h}" rx="2" fill="url(#gMetal)"></rect>
+    <rect x="${T.band.x}" y="${T.band.y}" width="${T.band.w}" height="2.5" fill="#e6e0d2" opacity="0.3"></rect>
+    ${rivets}
+
+    <!-- flared skirt -->
+    <path d="M ${T.band.x},${T.skirtTopY} L ${T.band.x + T.band.w},${T.skirtTopY} L ${T.skirtBotX + T.skirtBotW},${T.skirtBotY} L ${T.skirtBotX},${T.skirtBotY} Z" fill="url(#gMetalLo)"></path>
+    <rect x="${T.lip.x}" y="${T.lip.y}" width="${T.lip.w}" height="${T.lip.h}" rx="3" fill="url(#gMetal)"></rect>
+    <rect x="${T.lip.x}" y="${T.lip.y}" width="${T.lip.w}" height="2.5" fill="#ddd7c9" opacity="0.3"></rect>
+
+    <g class="spill" style="mix-blend-mode:screen">
+      <rect x="${T.collar.x}" y="${T.collar.y}" width="${T.collar.w}" height="${T.collar.h}" rx="3" fill="#ff5330"></rect>
+      <rect x="${T.body.x}" y="${T.body.y}" width="${T.body.w}" height="${T.body.h}" rx="2" fill="#d4300f"></rect>
+      <rect x="${T.band.x}" y="${T.band.y}" width="${T.band.w}" height="${T.band.h}" rx="2" fill="#a82409"></rect>
+    </g>
   </g>`;
 }
 
 function lampSVG({ variant }) {
   const caged = variant !== 'bare';
-  const ribs = variant === 'fresnel' ? fresnelRibs() : '';
-  const bareCrown = caged
-    ? ''
-    : `<ellipse cx="${CX}" cy="64" rx="26" ry="15" fill="url(#gCrown)"></ellipse>`;
+  const fluted = variant !== 'smooth';
   const backHoops = caged
-    ? HOOPS.map((h) => `<path d="${h.back}" fill="none" stroke="#241a1c" stroke-opacity="0.32" stroke-width="6"></path>`).join('')
+    ? HOOPS.map((h) => `<path d="${h.back}" fill="none" stroke="#2a1e20" stroke-opacity="0.3" stroke-width="5.5"></path>`).join('')
     : '';
 
-  return `<svg class="lamp" viewBox="0 0 440 420" xmlns="http://www.w3.org/2000/svg">
+  return `<svg class="lamp" viewBox="0 0 440 740" xmlns="http://www.w3.org/2000/svg">
 ${defs()}
 
-  <ellipse cx="${CX}" cy="356" rx="200" ry="17" fill="url(#gShadow)"></ellipse>
+  <ellipse cx="${CX}" cy="706" rx="212" ry="18" fill="url(#gShadow)"></ellipse>
 
-  <!-- ============ glass ============ -->
-  <g class="glassGroup">
-    <path d="${GLASS_PATH}" fill="url(#gGlass)"></path>
-    <path class="glassHot" d="${GLASS_PATH}" fill="url(#gHot)"></path>
-    <g clip-path="url(#clipGlass)">
+  <!-- ============ lens ============ -->
+  <g class="lensGroup">
+    <path d="${LENS_PATH}" fill="url(#gGlass)"></path>
+    <path class="glassHot" d="${LENS_PATH}" fill="url(#gHot)"></path>
+    <g clip-path="url(#clipLens)">
       ${backHoops}
-      <!-- reflector: a dark dish low in the dome, washed out once it is hot -->
+      <!-- the lamp column filling the tube, with the reflector low inside it -->
+      <ellipse class="column" cx="${CX}" cy="272" rx="74" ry="164" fill="url(#gColumn)" filter="url(#fb18)" style="mix-blend-mode:screen"></ellipse>
       <g class="reflector">
-        <ellipse cx="${CX}" cy="234" rx="46" ry="15" fill="#1d0c0b" opacity="0.62"></ellipse>
-        <path d="M ${CX - 46},233 A 46,24 0 0 1 ${CX + 46},233" fill="none" stroke="#e6cec4" stroke-opacity="0.16" stroke-width="2"></path>
-        <ellipse class="filament" cx="${CX}" cy="221" rx="6" ry="8" fill="#4a1512"></ellipse>
-        <ellipse class="core" cx="${CX}" cy="219" rx="40" ry="32" fill="#ffe9dd" filter="url(#fb14)"></ellipse>
+        <ellipse cx="${CX}" cy="384" rx="46" ry="15" fill="#1d0c0b" opacity="0.6"></ellipse>
+        <path d="M ${CX - 46},383 A 46,24 0 0 1 ${CX + 46},383" fill="none" stroke="#e6cec4" stroke-opacity="0.16" stroke-width="2"></path>
+        <ellipse class="filament" cx="${CX}" cy="370" rx="6" ry="9" fill="#4a1512"></ellipse>
+        <ellipse class="core" cx="${CX}" cy="368" rx="42" ry="34" fill="#ffeade" filter="url(#fb18)"></ellipse>
       </g>
-      <ellipse class="pool2" cx="${CX}" cy="242" rx="104" ry="40" fill="#ff5a2c" filter="url(#fb14)" style="mix-blend-mode:screen"></ellipse>
-      ${ribs}
-      <rect x="102" y="86" width="236" height="172" fill="url(#gCyl)"></rect>
-      <rect x="102" y="86" width="236" height="172" fill="url(#gCapDark)"></rect>
-      <!-- specular: broad soft highlight, crisp core, right-edge environment rim -->
-      <ellipse cx="163" cy="166" rx="33" ry="50" transform="rotate(-12 163 166)" fill="url(#gSpec)"></ellipse>
-      <ellipse cx="159" cy="146" rx="10" ry="19" transform="rotate(-14 159 146)" fill="#fff" opacity="0.38" filter="url(#fb3)"></ellipse>
-      <ellipse cx="197" cy="114" rx="60" ry="20" fill="url(#gSpecCap)"></ellipse>
-      <path d="M 322,132 Q 332,196 322,252" fill="none" stroke="#fff" stroke-opacity="0.15" stroke-width="10" filter="url(#fb6)"></path>
-      <!-- inner rim darkening + the meniscus where glass seats into the collar -->
-      <path d="${GLASS_PATH}" fill="none" stroke="#000" stroke-opacity="0.7" stroke-width="22" filter="url(#fb6)"></path>
-      <rect x="96" y="240" width="248" height="20" fill="#000" opacity="0.45"></rect>
-      <path class="edgeGlow" d="M 105,256 L 105,150 A 115,61 0 0 1 335,150 L 335,256" fill="none" stroke="#ff7444" stroke-width="4.5" filter="url(#fb3)"></path>
+      ${fluted ? flutes() : ''}
+      <rect x="102" y="${Y_APEX}" width="236" height="${Y_LENS_BOT - Y_APEX}" fill="url(#gCyl)"></rect>
+      <rect x="102" y="${Y_APEX}" width="236" height="${Y_LENS_BOT - Y_APEX}" fill="url(#gCapDark)"></rect>
+      <!-- specular: broad soft highlight down the tube, crisp core, cap sheen -->
+      <ellipse cx="160" cy="272" rx="30" ry="118" transform="rotate(-4 160 272)" fill="url(#gSpec)"></ellipse>
+      <ellipse cx="157" cy="218" rx="9" ry="52" transform="rotate(-5 157 218)" fill="#fff" opacity="0.28" filter="url(#fb3)"></ellipse>
+      <ellipse cx="199" cy="82" rx="66" ry="26" fill="url(#gSpecCap)"></ellipse>
+      <path d="M 322,150 Q 332,282 322,396" fill="none" stroke="#fff" stroke-opacity="0.14" stroke-width="11" filter="url(#fb6)"></path>
+      <!-- inner rim darkening + the meniscus where the lens seats into the base -->
+      <path d="${LENS_PATH}" fill="none" stroke="#000" stroke-opacity="0.72" stroke-width="24" filter="url(#fb6)"></path>
+      <rect x="102" y="386" width="236" height="22" fill="#000" opacity="0.45"></rect>
+      <path class="edgeGlow" d="M 105,404 L 105,158 A 115,115 0 0 1 335,158 L 335,404" fill="none" stroke="#ff7444" stroke-width="4.5" filter="url(#fb3)"></path>
     </g>
-    <!-- rim light picked up off the room, left edge -->
-    <path d="M 103,252 L 103,150 A 117,63 0 0 1 129.6,108.9" fill="none" stroke="#ffb9a6" stroke-opacity="0.22" stroke-width="2.5" filter="url(#fb3)"></path>
-    <path d="${GLASS_PATH}" fill="none" stroke="#0a0a0d" stroke-opacity="0.9" stroke-width="2"></path>
+    <path d="M 103,402 L 103,158 A 117,117 0 0 1 152,73" fill="none" stroke="#ffb9a6" stroke-opacity="0.22" stroke-width="2.5" filter="url(#fb3)"></path>
+    <path d="${LENS_PATH}" fill="none" stroke="#0a0a0d" stroke-opacity="0.85" stroke-width="2"></path>
   </g>
 
-  ${bareCrown}
   ${caged ? cage() : ''}
-
-  <!-- ============ base ============ -->
-  <g class="housing">
-    <ellipse cx="${CX}" cy="${Y_COLLAR + 2}" rx="124" ry="10" fill="#2c2c33"></ellipse>
-    <rect x="100" y="${Y_COLLAR}" width="240" height="20" rx="3" fill="url(#gCollar)"></rect>
-    <rect x="94" y="266" width="252" height="64" rx="4" fill="url(#gHousing)"></rect>
-    <rect x="94" y="266" width="252" height="64" rx="4" fill="none" stroke="#000" stroke-opacity="0.7"></rect>
-    <rect x="94" y="266" width="252" height="3" fill="#74747e" opacity="0.5"></rect>
-    <rect x="94" y="296" width="252" height="2" fill="#000" opacity="0.55"></rect>
-    <rect x="78" y="328" width="284" height="20" rx="3" fill="url(#gFoot)"></rect>
-    <rect x="78" y="328" width="284" height="2" fill="#6a6a75" opacity="0.45"></rect>
-    <circle cx="116" cy="282" r="5" fill="url(#gCrown)"></circle>
-    <circle cx="324" cy="282" r="5" fill="url(#gCrown)"></circle>
-    <g class="spill" style="mix-blend-mode:screen">
-      <rect x="100" y="${Y_COLLAR}" width="240" height="20" rx="3" fill="#ff5330"></rect>
-      <rect x="94" y="266" width="252" height="64" rx="4" fill="#d62c10"></rect>
-      <rect x="78" y="328" width="284" height="20" rx="3" fill="#a8240d"></rect>
-    </g>
-  </g>
+  ${base()}
 </svg>`;
 }
 
@@ -345,16 +382,16 @@ function styles({ w, h, lampW, lampTop, chrome }) {
   const sy = (v) => +(lampTop + v * k).toFixed(1);
 
   const cx = sx(CX);
-  const glassTop = sy(Y_APEX);
-  const glassBot = sy(Y_GLASS_BOT);
-  const bulbY = sy(224);
-  const footBot = sy(348);
+  const lensTop = sy(Y_APEX);
+  const lensBot = sy(Y_LENS_BOT);
+  const bulbY = sy(300);
+  const footBot = sy(694);
 
-  const haloW = +(400 * k).toFixed(1);
-  const haloH = +(glassBot - glassTop + 150 * k).toFixed(1);
+  const haloW = +(420 * k).toFixed(1);
+  const haloH = +(lensBot - lensTop + 150 * k).toFixed(1);
   const beamSize = +(Math.max(w, h) * 2.6).toFixed(0);
-  const poolW = +(700 * k).toFixed(1);
-  const poolH = +(160 * k).toFixed(1);
+  const poolW = +(760 * k).toFixed(1);
+  const poolH = +(170 * k).toFixed(1);
 
   return `
   *, *::before, *::after { box-sizing: border-box; }
@@ -365,7 +402,7 @@ function styles({ w, h, lampW, lampTop, chrome }) {
     position: relative; width: ${w}px; height: ${h}px; overflow: hidden;
     isolation: isolate; user-select: none; -webkit-tap-highlight-color: transparent;
     background:
-      radial-gradient(128% 86% at 50% ${(((glassTop + 30) / h) * 100).toFixed(1)}%, #232329 0%, #141418 34%, #0a0a0c 68%, #050506 100%);
+      radial-gradient(126% 84% at 50% ${((((lensTop + lensBot) / 2) / h) * 100).toFixed(1)}%, #26262b 0%, #16161a 34%, #0a0a0c 68%, #050506 100%);
   }
 
   /* ---- the room the light lives in ---- */
@@ -401,11 +438,11 @@ function styles({ w, h, lampW, lampTop, chrome }) {
       rgba(255,60,36,0) 360deg); }
 
   /* ---- light landing on surfaces ---- */
-  .halo { position: absolute; left: ${cx}px; top: ${(glassTop - 70 * k).toFixed(1)}px;
+  .halo { position: absolute; left: ${cx}px; top: ${(lensTop - 70 * k).toFixed(1)}px;
     width: ${haloW}px; height: ${haloH}px; margin-left: ${(-haloW / 2).toFixed(1)}px;
-    border-radius: 46% / 50%; filter: blur(${(36 * k).toFixed(1)}px); mix-blend-mode: screen;
+    border-radius: 46% / 50%; filter: blur(${(38 * k).toFixed(1)}px); mix-blend-mode: screen;
     background: radial-gradient(closest-side, rgba(255,58,32,0.95), rgba(255,34,18,0.42) 44%, rgba(255,24,12,0) 78%);
-    opacity: 0.13; transition: opacity 380ms ease; }
+    opacity: 0.12; transition: opacity 380ms ease; }
   .pool { position: absolute; left: ${cx}px; top: ${(footBot - poolH * 0.34).toFixed(1)}px;
     width: ${poolW}px; height: ${poolH}px; margin-left: ${(-poolW / 2).toFixed(1)}px;
     border-radius: 50%; filter: blur(${(22 * k).toFixed(1)}px); mix-blend-mode: screen;
@@ -420,7 +457,7 @@ function styles({ w, h, lampW, lampTop, chrome }) {
   .lampWrap { position: absolute; left: ${left}px; top: ${lampTop}px; width: ${lampW}px; }
   .lamp { display: block; width: 100%; height: auto; }
   .glassHot { opacity: 0; transition: opacity 260ms ease; }
-  .core, .pool2, .edgeGlow { opacity: 0; transition: opacity 260ms ease; }
+  .core, .column, .edgeGlow { opacity: 0; transition: opacity 260ms ease; }
   .spill { opacity: 0; transition: opacity 300ms ease; }
   .reflector { transform-box: fill-box; transform-origin: center; }
 
@@ -432,13 +469,12 @@ function styles({ w, h, lampW, lampTop, chrome }) {
   .lit .wash { opacity: 1; animation: washPulse 1.05s ease-in-out infinite; }
   .lit .glassHot { opacity: 1; animation: hotPulse 1.05s ease-in-out infinite; }
   .lit .core { opacity: 1; }
-  .lit .pool2 { opacity: 0.46; }
+  .lit .column { opacity: 0.55; }
   .lit .edgeGlow { opacity: 0.6; }
   .lit .filament { fill: #fff4ec; }
-  .lit .spill { opacity: 0.16; animation: spillPulse 1.05s ease-in-out infinite; }
-  .lit .housing .spill { opacity: 0.11; animation: spillPulseLow 1.05s ease-in-out infinite; }
+  .lit .spill { opacity: 0.2; animation: spillPulse 1.05s ease-in-out infinite; }
+  .lit .housing .spill { opacity: 0.13; animation: spillPulseLow 1.05s ease-in-out infinite; }
   .lit .reflector { animation: swing 1.05s ease-in-out infinite; }
-  .nocage .cage { display: none; }
 
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes swing { 0%, 100% { transform: translateX(-9%); } 50% { transform: translateX(9%); } }
@@ -446,8 +482,8 @@ function styles({ w, h, lampW, lampTop, chrome }) {
   @keyframes poolPulse { 0%, 100% { opacity: 0.66; } 50% { opacity: 1; } }
   @keyframes washPulse { 0%, 100% { opacity: 0.62; } 50% { opacity: 1; } }
   @keyframes hotPulse { 0%, 100% { opacity: 0.84; } 50% { opacity: 1; } }
-  @keyframes spillPulse { 0%, 100% { opacity: 0.11; } 50% { opacity: 0.22; } }
-  @keyframes spillPulseLow { 0%, 100% { opacity: 0.07; } 50% { opacity: 0.15; } }
+  @keyframes spillPulse { 0%, 100% { opacity: 0.13; } 50% { opacity: 0.26; } }
+  @keyframes spillPulseLow { 0%, 100% { opacity: 0.08; } 50% { opacity: 0.17; } }
 
   /* ---- app chrome (values lifted from GoalLightView.swift / ContentView.swift) ---- */
   .settings { position: absolute; top: 18px; right: 20px; display: flex; align-items: flex-end; gap: 4px;
@@ -539,11 +575,10 @@ ${script || ''}
 
 // ---------------------------------------------------------------- artboards
 
-const PHONE = { w: 390, h: 844, lampW: 540, lampTop: 134, chrome: { statusTop: 638, readyTop: 706 } };
-const ALT = { w: 390, h: 620, lampW: 500, lampTop: 56, chrome: { statusTop: 516, readyTop: 582 } };
-const STUDY = { w: 620, h: 780, lampW: 660, lampTop: 64, chrome: { statusTop: 700, readyTop: 740 } };
+const PHONE = { w: 390, h: 844, lampW: 346, lampTop: 56, chrome: { statusTop: 640, readyTop: 716 } };
+const ALT = { w: 390, h: 760, lampW: 330, lampTop: 22, chrome: { statusTop: 614, readyTop: 690 } };
+const STUDY = { w: 620, h: 820, lampW: 452, lampTop: 12, chrome: { statusTop: 740, readyTop: 780 } };
 
-// --- Main: the redesigned Goal screen. Tap anywhere to fire the 2.6s show.
 writeFileSync(
   join(OUT, 'Main.dc.html'),
   doc({
@@ -583,7 +618,6 @@ class Component extends DCLogic {
   })
 );
 
-// --- Fired: the same screen held at the peak of the celebration.
 writeFileSync(
   join(OUT, 'Fired.dc.html'),
   doc({
@@ -595,29 +629,25 @@ writeFileSync(
   })
 );
 
-// --- Lamp: the fixture on its own, big, for judging the realism.
 writeFileSync(
   join(OUT, 'Lamp.dc.html'),
   doc({
     css:
       styles(STUDY) +
       `
-  .stage { background: radial-gradient(120% 84% at 50% 32%, #212127 0%, #131317 38%, #08080a 74%, #050506 100%); }`,
+  .stage { background: radial-gradient(120% 84% at 50% 34%, #212127 0%, #131317 38%, #08080a 74%, #050506 100%); }`,
     body: `<div class="{{rootCls}}" style="--beam: {{beam}}">
   ${room('caged', false)}
 </div>`,
     script: `<script data-dc-script data-props='{
   "lit": {"editor": "boolean", "default": true, "section": "Light"},
-  "cage": {"editor": "boolean", "default": true, "section": "Hardware"},
   "beamStrength": {"editor": "range", "default": 75, "min": 0, "max": 100, "step": 5, "unit": "%", "section": "Light"},
-  "$preview": {"width": 620, "height": 780}
+  "$preview": {"width": 620, "height": 820}
 }'>
 class Component extends DCLogic {
   renderVals() {
-    var lit = this.props.lit !== false;
-    var cage = this.props.cage !== false;
     return {
-      rootCls: 'stage' + (lit ? ' lit' : '') + (cage ? '' : ' nocage'),
+      rootCls: 'stage' + (this.props.lit !== false ? ' lit' : ''),
       beam: String((this.props.beamStrength == null ? 75 : this.props.beamStrength) / 100),
     };
   }
@@ -626,19 +656,19 @@ class Component extends DCLogic {
   })
 );
 
-// --- Alternate A: Fresnel-ribbed beacon glass behind the same cage.
+// --- Alternate A: smooth lens, no flutes.
 writeFileSync(
-  join(OUT, 'AltFresnel.dc.html'),
+  join(OUT, 'AltSmooth.dc.html'),
   doc({
     css: styles(ALT),
     body: `<div class="stage lit noready" style="--beam: 0.8">
-  ${room('fresnel')}
+  ${room('smooth')}
   <div class="status"><span>GOAL!</span></div>
 </div>`,
   })
 );
 
-// --- Alternate B: no cage - polished dome, product-shot clean.
+// --- Alternate B: fluted lens with the guard removed.
 writeFileSync(
   join(OUT, 'AltBare.dc.html'),
   doc({
@@ -650,4 +680,4 @@ writeFileSync(
   })
 );
 
-console.log('wrote Main, Fired, Lamp, AltFresnel, AltBare');
+console.log('wrote Main, Fired, Lamp, AltSmooth, AltBare');
