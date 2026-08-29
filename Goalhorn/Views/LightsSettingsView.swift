@@ -173,17 +173,51 @@ struct LightsSettingsView: View {
                     )
                 }
             } else {
-                Section {
-                    ForEach(homeKit.lights) { light in
-                        lightRow(light)
+                ForEach(homeKit.rooms) { room in
+                    Section {
+                        ForEach(room.lights) { light in
+                            lightRow(light)
+                        }
+                    } header: {
+                        roomHeader(room)
+                    } footer: {
+                        // The explanation belongs once, under the last room.
+                        if room.id == homeKit.rooms.last?.id {
+                            Text("Color bulbs give the full colour spin. Others will still flash brightness. The beam sweeps in the order shown, room by room.")
+                        }
                     }
-                } header: {
-                    Text("Choose Lights")
-                } footer: {
-                    Text("Color bulbs give the full colour spin. Others will still flash brightness.")
                 }
             }
         }
+    }
+
+    private func roomHeader(_ room: LightRoom) -> some View {
+        HStack {
+            Text(room.displayName)
+            Spacer()
+            Button(isFullySelected(room) ? "None" : "All") {
+                toggleRoom(room)
+            }
+            .font(.caption)
+            .textCase(nil)
+        }
+    }
+
+    private func isFullySelected(_ room: LightRoom) -> Bool {
+        !room.lights.isEmpty && room.lights.allSatisfy { settings.selectedLightIDs.contains($0.id) }
+    }
+
+    /// Select or clear a whole room in one write — mutating the set per light
+    /// would persist to `UserDefaults` once per bulb.
+    private func toggleRoom(_ room: LightRoom) {
+        let roomIDs = room.lights.map(\.id)
+        var ids = settings.selectedLightIDs
+        if isFullySelected(room) {
+            ids.subtract(roomIDs)
+        } else {
+            ids.formUnion(roomIDs)
+        }
+        settings.selectedLightIDs = ids
     }
 
     private func lightRow(_ light: GoalLight) -> some View {

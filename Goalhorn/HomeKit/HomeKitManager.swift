@@ -12,6 +12,8 @@ final class GoalLight: Identifiable {
     let id: String
     let name: String
     let accessoryName: String
+    /// The HomeKit room this bulb's accessory sits in.
+    let roomName: String
     let service: HMService
     let isReachable: Bool
 
@@ -28,6 +30,7 @@ final class GoalLight: Identifiable {
         self.id = service.uniqueIdentifier.uuidString
         self.name = service.name
         self.accessoryName = accessory.name
+        self.roomName = accessory.room?.name ?? "Default Room"
         self.service = service
         self.isReachable = accessory.isReachable
 
@@ -55,6 +58,22 @@ final class GoalLight: Identifiable {
     var supportsColor: Bool { hue != nil && saturation != nil }
 }
 
+/// One HomeKit room's lights, so the picker can be grouped the way the Home app
+/// is rather than as one flat alphabetical list.
+struct LightRoom: Identifiable {
+    let id: String
+    let name: String
+    /// Only set when the user has more than one home, where two rooms can share
+    /// a name and the header would otherwise be ambiguous.
+    let homeName: String?
+    let lights: [GoalLight]
+
+    var displayName: String {
+        guard let homeName else { return name }
+        return "\(homeName) · \(name)"
+    }
+}
+
 /// Bridges HomeKit into SwiftUI: manages authorization, exposes the user's homes
 /// and their lightbulbs, and reports readiness.
 @MainActor
@@ -69,6 +88,10 @@ final class HomeKitManager: NSObject, ObservableObject {
     @Published private(set) var status: Status = .notStarted
     @Published private(set) var homes: [HMHome] = []
     @Published private(set) var lights: [GoalLight] = []
+    /// The same lights, grouped by HomeKit room. `lights` is kept flat for the
+    /// engine and is ordered to match, so the beam sweeps room by room rather
+    /// than hopping around the house alphabetically.
+    @Published private(set) var rooms: [LightRoom] = []
 
     private var manager: HMHomeManager?
 
@@ -92,15 +115,41 @@ final class HomeKitManager: NSObject, ObservableObject {
         guard let manager else { return }
         homes = manager.homes
 
-        var collected: [GoalLight] = []
+        // Room names are only unique within a home, so a group is keyed by both
+        // and only labelled with the home when there is more than one.
+        let showHomeNames = manager.homes.count > 1
+        var groups: [(key: String, name: String, homeName: String?, lights: [GoalLight])] = []
+        var indexForKey: [String: Int] = [:]
+
         for home in manager.homes {
             for accessory in home.accessories {
+                let room = accessory.room
+                let key = "\(home.uniqueIdentifier.uuidString)|\(room?.uniqueIdentifier.uuidString ?? "unassigned")"
                 for service in accessory.services where service.serviceType == HMServiceTypeLightbulb {
-                    collected.append(GoalLight(service: service, accessory: accessory))
+                    let light = GoalLight(service: service, accessory: accessory)
+                    if let index = indexForKey[key] {
+                        groups[index].lights.append(light)
+                    } else {
+                        indexForKey[key] = groups.count
+                        groups.append((key, light.roomName, showHomeNames ? home.name : nil, [light]))
+                    }
                 }
             }
         }
-        lights = collected.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+
+        let sorted = groups
+            .map { group in
+                LightRoom(
+                    id: group.key,
+                    name: group.name,
+                    homeName: group.homeName,
+                    lights: group.lights.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+                )
+            }
+            .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+
+        rooms = sorted
+        lights = sorted.flatMap(\.lights)
     }
 
     private func updateStatus() {

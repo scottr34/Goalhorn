@@ -22,7 +22,7 @@ You bring your own goal song (upload any audio file) and your own smart lights.
 | **Goal** | A giant animated goal light. Tap it to fire the celebration; a **Stop** button ends it early. |
 | **Songs** | Upload goal songs (MP3/M4A/WAV/AIFF), pick which one plays, and set how long it runs. |
 | **Sonos** | Choose the output (Sonos vs. iPhone), scan your Wi‑Fi for Sonos players, set the volume. |
-| **Lights** | Grant HomeKit access, choose which bulbs spin, build the colour sequence, set how long the show lasts, and run a **test**. |
+| **Lights** | Grant HomeKit access, choose which bulbs spin (grouped by HomeKit room), build the colour sequence, set how long the show lasts, and run a **test**. |
 
 ## Requirements
 
@@ -76,7 +76,9 @@ CelebrationController ──► GoalLightEngine ──► HomeKit (spin bulbs, t
       └─► Phone path:  LocalAudioPlayer (AVAudioPlayer)
 ```
 
-- **HomeKit** (`HomeKit/`): `HomeKitManager` surfaces your lightbulb services;
+- **HomeKit** (`HomeKit/`): `HomeKitManager` surfaces your lightbulb services,
+  grouped by HomeKit room (each room gets an *All/None* control, and the beam
+  sweeps room by room in the order shown);
   `GoalLightEngine` snapshots each bulb, sweeps a bright "beam" around the
   selected bulbs while stepping through your colour sequence, then restores the
   original state. A sequence entry can be a *dark beat* (`Off`), which is what
