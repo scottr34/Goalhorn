@@ -30,6 +30,7 @@ final class AppSettings: ObservableObject {
         static let selectedTrackID = "selectedTrackID"
         static let sonosDevice = "sonosDevice"
         static let sonosVolume = "sonosVolume"
+        static let goalColors = "goalColors"
     }
 
     /// How long the light show + horn runs, in seconds.
@@ -64,6 +65,16 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    /// The colours the beacon cycles through, in order. An entry may be a
+    /// "dark beat" (`isOff`), which is what makes red/off strobe.
+    @Published var goalColors: [GoalLightColor] {
+        didSet {
+            if let data = try? JSONEncoder().encode(goalColors) {
+                defaults.set(data, forKey: Key.goalColors)
+            }
+        }
+    }
+
     /// Volume (0–100) to set on Sonos before playing the horn.
     @Published var sonosVolume: Int {
         didSet { defaults.set(sonosVolume, forKey: Key.sonosVolume) }
@@ -76,6 +87,14 @@ final class AppSettings: ObservableObject {
         self.selectedLightIDs = Set((defaults.array(forKey: Key.selectedLightIDs) as? [String]) ?? [])
         self.audioTarget = AudioTarget(rawValue: defaults.string(forKey: Key.audioTarget) ?? "") ?? .sonos
         self.sonosVolume = defaults.object(forKey: Key.sonosVolume) as? Int ?? 45
+
+        if let data = defaults.data(forKey: Key.goalColors),
+           let colors = try? JSONDecoder().decode([GoalLightColor].self, from: data),
+           !colors.isEmpty {
+            self.goalColors = colors
+        } else {
+            self.goalColors = GoalLightColor.defaultSequence
+        }
 
         if let raw = defaults.string(forKey: Key.selectedTrackID) {
             self.selectedTrackID = UUID(uuidString: raw)

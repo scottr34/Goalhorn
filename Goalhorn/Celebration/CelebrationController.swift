@@ -47,7 +47,7 @@ final class CelebrationController: ObservableObject {
         // Lights: run the beacon on the selected bulbs.
         let selected = homeKit.lights.filter { settings.selectedLightIDs.contains($0.id) }
         if !selected.isEmpty {
-            lightEngine.start(on: selected, duration: duration)
+            lightEngine.start(on: selected, colors: settings.goalColors, duration: duration)
         }
 
         // Audio.

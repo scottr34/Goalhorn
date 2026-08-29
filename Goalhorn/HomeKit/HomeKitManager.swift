@@ -15,22 +15,40 @@ final class GoalLight: Identifiable {
     let service: HMService
     let isReachable: Bool
 
+    // Resolved once, up front. These used to be computed properties that each
+    // did a linear scan of `service.characteristics` with a string compare, and
+    // the beacon loop touches them for every bulb on every tick — so a show with
+    // six bulbs was doing thousands of redundant scans a second.
+    let power: HMCharacteristic?
+    let brightness: HMCharacteristic?
+    let hue: HMCharacteristic?
+    let saturation: HMCharacteristic?
+
     init(service: HMService, accessory: HMAccessory) {
         self.id = service.uniqueIdentifier.uuidString
         self.name = service.name
         self.accessoryName = accessory.name
         self.service = service
         self.isReachable = accessory.isReachable
-    }
 
-    func characteristic(_ type: String) -> HMCharacteristic? {
-        service.characteristics.first { $0.characteristicType == type }
+        var power: HMCharacteristic?
+        var brightness: HMCharacteristic?
+        var hue: HMCharacteristic?
+        var saturation: HMCharacteristic?
+        for characteristic in service.characteristics {
+            switch characteristic.characteristicType {
+            case HMCharacteristicTypePowerState: power = characteristic
+            case HMCharacteristicTypeBrightness: brightness = characteristic
+            case HMCharacteristicTypeHue: hue = characteristic
+            case HMCharacteristicTypeSaturation: saturation = characteristic
+            default: break
+            }
+        }
+        self.power = power
+        self.brightness = brightness
+        self.hue = hue
+        self.saturation = saturation
     }
-
-    var power: HMCharacteristic? { characteristic(HMCharacteristicTypePowerState) }
-    var brightness: HMCharacteristic? { characteristic(HMCharacteristicTypeBrightness) }
-    var hue: HMCharacteristic? { characteristic(HMCharacteristicTypeHue) }
-    var saturation: HMCharacteristic? { characteristic(HMCharacteristicTypeSaturation) }
 
     /// A light we can spin colours on needs hue + saturation; otherwise we can
     /// still strobe brightness/power.
