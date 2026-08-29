@@ -12,29 +12,96 @@ final class GoalLight: Identifiable {
     let id: String
     let name: String
     let accessoryName: String
+    /// The HomeKit room this bulb's accessory sits in.
+    let roomName: String
     let service: HMService
     let isReachable: Bool
+
+    // Resolved once, up front. These used to be computed properties that each
+    // did a linear scan of `service.characteristics` with a string compare, and
+    // the beacon loop touches them for every bulb on every tick — so a show with
+    // six bulbs was doing thousands of redundant scans a second.
+    let power: HMCharacteristic?
+    let brightness: HMCharacteristic?
+    let hue: HMCharacteristic?
+    let saturation: HMCharacteristic?
 
     init(service: HMService, accessory: HMAccessory) {
         self.id = service.uniqueIdentifier.uuidString
         self.name = service.name
         self.accessoryName = accessory.name
+        self.roomName = accessory.room?.name ?? "Default Room"
         self.service = service
         self.isReachable = accessory.isReachable
-    }
 
-    func characteristic(_ type: String) -> HMCharacteristic? {
-        service.characteristics.first { $0.characteristicType == type }
+        var power: HMCharacteristic?
+        var brightness: HMCharacteristic?
+        var hue: HMCharacteristic?
+        var saturation: HMCharacteristic?
+        for characteristic in service.characteristics {
+            switch characteristic.characteristicType {
+            case HMCharacteristicTypePowerState: power = characteristic
+            case HMCharacteristicTypeBrightness: brightness = characteristic
+            case HMCharacteristicTypeHue: hue = characteristic
+            case HMCharacteristicTypeSaturation: saturation = characteristic
+            default: break
+            }
+        }
+        self.power = power
+        self.brightness = brightness
+        self.hue = hue
+        self.saturation = saturation
     }
-
-    var power: HMCharacteristic? { characteristic(HMCharacteristicTypePowerState) }
-    var brightness: HMCharacteristic? { characteristic(HMCharacteristicTypeBrightness) }
-    var hue: HMCharacteristic? { characteristic(HMCharacteristicTypeHue) }
-    var saturation: HMCharacteristic? { characteristic(HMCharacteristicTypeSaturation) }
 
     /// A light we can spin colours on needs hue + saturation; otherwise we can
     /// still strobe brightness/power.
     var supportsColor: Bool { hue != nil && saturation != nil }
+
+    // Accessories advertise their own ranges and reject anything outside them.
+    // Brightness in particular often has a minimum of 1, not 0, so a write of 0
+    // is simply dropped and the bulb never goes dark.
+    private static func range(of characteristic: HMCharacteristic?, fallback: ClosedRange<Double>) -> ClosedRange<Double> {
+        guard
+            let metadata = characteristic?.metadata,
+            let low = metadata.minimumValue?.doubleValue,
+            let high = metadata.maximumValue?.doubleValue,
+            low < high
+        else { return fallback }
+        return low...high
+    }
+
+    var brightnessRange: ClosedRange<Double> { Self.range(of: brightness, fallback: 0...100) }
+    var hueRange: ClosedRange<Double> { Self.range(of: hue, fallback: 0...360) }
+    var saturationRange: ClosedRange<Double> { Self.range(of: saturation, fallback: 0...100) }
+
+    /// The dimmest this bulb will actually accept — its "off" for a dark beat.
+    var minBrightness: Int { Int(brightnessRange.lowerBound.rounded()) }
+
+    func clampBrightness(_ value: Int) -> Int {
+        Int(min(max(Double(value), brightnessRange.lowerBound), brightnessRange.upperBound).rounded())
+    }
+    func clampHue(_ value: Double) -> Double {
+        min(max(value, hueRange.lowerBound), hueRange.upperBound)
+    }
+    func clampSaturation(_ value: Double) -> Double {
+        min(max(value, saturationRange.lowerBound), saturationRange.upperBound)
+    }
+}
+
+/// One HomeKit room's lights, so the picker can be grouped the way the Home app
+/// is rather than as one flat alphabetical list.
+struct LightRoom: Identifiable {
+    let id: String
+    let name: String
+    /// Only set when the user has more than one home, where two rooms can share
+    /// a name and the header would otherwise be ambiguous.
+    let homeName: String?
+    let lights: [GoalLight]
+
+    var displayName: String {
+        guard let homeName else { return name }
+        return "\(homeName) · \(name)"
+    }
 }
 
 /// Bridges HomeKit into SwiftUI: manages authorization, exposes the user's homes
@@ -51,6 +118,10 @@ final class HomeKitManager: NSObject, ObservableObject {
     @Published private(set) var status: Status = .notStarted
     @Published private(set) var homes: [HMHome] = []
     @Published private(set) var lights: [GoalLight] = []
+    /// The same lights, grouped by HomeKit room. `lights` is kept flat for the
+    /// engine and is ordered to match, so the beam sweeps room by room rather
+    /// than hopping around the house alphabetically.
+    @Published private(set) var rooms: [LightRoom] = []
 
     private var manager: HMHomeManager?
 
@@ -74,15 +145,41 @@ final class HomeKitManager: NSObject, ObservableObject {
         guard let manager else { return }
         homes = manager.homes
 
-        var collected: [GoalLight] = []
+        // Room names are only unique within a home, so a group is keyed by both
+        // and only labelled with the home when there is more than one.
+        let showHomeNames = manager.homes.count > 1
+        var groups: [(key: String, name: String, homeName: String?, lights: [GoalLight])] = []
+        var indexForKey: [String: Int] = [:]
+
         for home in manager.homes {
             for accessory in home.accessories {
+                let room = accessory.room
+                let key = "\(home.uniqueIdentifier.uuidString)|\(room?.uniqueIdentifier.uuidString ?? "unassigned")"
                 for service in accessory.services where service.serviceType == HMServiceTypeLightbulb {
-                    collected.append(GoalLight(service: service, accessory: accessory))
+                    let light = GoalLight(service: service, accessory: accessory)
+                    if let index = indexForKey[key] {
+                        groups[index].lights.append(light)
+                    } else {
+                        indexForKey[key] = groups.count
+                        groups.append((key, light.roomName, showHomeNames ? home.name : nil, [light]))
+                    }
                 }
             }
         }
-        lights = collected.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+
+        let sorted = groups
+            .map { group in
+                LightRoom(
+                    id: group.key,
+                    name: group.name,
+                    homeName: group.homeName,
+                    lights: group.lights.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+                )
+            }
+            .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+
+        rooms = sorted
+        lights = sorted.flatMap(\.lights)
     }
 
     private func updateStatus() {

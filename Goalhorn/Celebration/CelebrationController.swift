@@ -21,6 +21,7 @@ final class CelebrationController: ObservableObject {
     private let localPlayer = LocalAudioPlayer()
 
     private var endTask: Task<Void, Never>?
+    private var songTask: Task<Void, Never>?
 
     init(settings: AppSettings, homeKit: HomeKitManager, audioLibrary: AudioLibrary, sonos: SonosController) {
         self.settings = settings
@@ -47,11 +48,12 @@ final class CelebrationController: ObservableObject {
         // Lights: run the beacon on the selected bulbs.
         let selected = homeKit.lights.filter { settings.selectedLightIDs.contains($0.id) }
         if !selected.isEmpty {
-            lightEngine.start(on: selected, duration: duration)
+            lightEngine.start(on: selected, colors: settings.goalColors, duration: duration)
         }
 
         // Audio.
         startAudio()
+        scheduleSongEnd(lightShowDuration: duration)
 
         // End the on-screen celebration after the configured duration. The song
         // itself is left to play out (the Sonos stream server stays alive until
@@ -68,12 +70,65 @@ final class CelebrationController: ObservableObject {
     func stop() {
         endTask?.cancel()
         endTask = nil
+        songTask?.cancel()
+        songTask = nil
         lightEngine.stop()
         localPlayer.stop()
+        audioServer.stop()
         if let device = settings.sonosDevice {
             Task { try? await sonos.stop(on: device) }
         }
         isCelebrating = false
+    }
+
+    /// Put the lights back if a previous celebration was interrupted before it
+    /// could (the app was killed mid-show). Cheap no-op when there is nothing
+    /// outstanding; call it whenever HomeKit lights become available.
+    func restoreInterruptedShow() {
+        let lights = homeKit.lights
+        guard !lights.isEmpty else { return }
+        Task { await lightEngine.restoreInterruptedShow(on: lights) }
+    }
+
+    // MARK: - Song length
+
+    /// Stop the horn early when the user has capped it.
+    private func scheduleSongEnd(lightShowDuration: TimeInterval) {
+        songTask?.cancel()
+        songTask = nil
+
+        let limit: TimeInterval?
+        switch settings.songPlayback {
+        case .full: limit = nil
+        case .matchLights: limit = lightShowDuration
+        case .fixed: limit = settings.songDuration
+        }
+        guard let limit, limit > 0 else { return }
+
+        songTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(limit * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await self?.fadeOutAudio()
+        }
+    }
+
+    /// Ease the horn out rather than cutting it dead mid-note.
+    private func fadeOutAudio(over seconds: TimeInterval = 1.5) async {
+        localPlayer.fadeOut(over: seconds)
+
+        guard settings.audioTarget == .sonos, let device = settings.sonosDevice else { return }
+        // Sonos has no fade of its own, so step the volume down, stop, and put
+        // the configured level back for the next goal.
+        let configured = settings.sonosVolume
+        let steps = 4
+        for step in stride(from: steps - 1, through: 0, by: -1) {
+            guard !Task.isCancelled else { break }
+            try? await sonos.setVolume(max(0, configured * step / steps), on: device)
+            try? await Task.sleep(nanoseconds: UInt64(seconds / Double(steps) * 1_000_000_000))
+        }
+        try? await sonos.stop(on: device)
+        audioServer.stop()
+        try? await sonos.setVolume(configured, on: device)
     }
 
     // MARK: - Audio routing

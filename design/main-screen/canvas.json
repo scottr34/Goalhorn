@@ -1,0 +1,33 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 390, "h": 844, "title": "Goal screen — idle (tap to fire)", "is_interactive": true },
+    { "file": "Fired.dc.html", "x": 470, "y": 0, "w": 390, "h": 844, "title": "Goal screen — celebrating" },
+    { "file": "Lamp.dc.html", "x": 940, "y": 0, "w": 620, "h": 820, "title": "The fixture, close up" },
+    { "file": "AltSmooth.dc.html", "x": 0, "y": 964, "w": 390, "h": 760, "title": "Alt A — smooth lens, no flutes" },
+    { "file": "AltBare.dc.html", "x": 470, "y": 964, "w": 390, "h": 760, "title": "Alt B — fluted lens, no guard" }
+  ],
+  "annotations": [
+    {
+      "id": "brief",
+      "x": -350,
+      "y": 0,
+      "w": 290,
+      "text": "Goalhorn — main screen redesign\n\nSame screen, same tokens as the app today (dark radial room, #8A8A90 idle label, #FF4D3D GOAL!, the 3-bar settings glyph, red tab tint). What changed is the light itself.\n\nTap the first artboard to fire it."
+    },
+    {
+      "id": "realism",
+      "x": 1600,
+      "y": 20,
+      "w": 300,
+      "text": "Built to the reference fixture\n\n1. Tall, not squat. The lens is a tall fluted cylinder with a hemispherical cap, on a base that is nearly half the total height — the proportions of the real rink light.\n\n2. Vertical flutes. The lens is a fluted Fresnel: flutes are evenly spaced in ANGLE, so they bunch toward the silhouette and thin out. This is the single strongest cue that the red thing is glass and not a shape.\n\n3. The guard wraps. Wires sit at even azimuths, so they bunch and foreshorten the same way; over the cap each one follows its actual meridian, so it hugs the lens instead of bowing past it.\n\n4. Hoops obey perspective. Above eye level the near half bulges up, below it sags; their ends darken as they turn away, and the back halves show faintly through the glass curving the other way.\n\n5. Satin aluminium, shaded ACROSS. Every base tier is a cylinder — dark edge, bright band, bounce off the room on the far side. A top-to-bottom ramp would read as a flat slab.\n\n6. Idle is OFF — deep cherry, near-black where it turns away — so the fired state actually hits.\n\n7. The room reacts: two opposing beams off a spinning reflector, a pool of light on the floor, red bounce caught on the metal, and film grain over everything.\n\nNo brand marks: the reference carries a brewery logo on the mid band. That band is left as plain riveted hardware."
+    },
+    {
+      "id": "alts",
+      "x": 940,
+      "y": 964,
+      "w": 300,
+      "text": "Two alternates on the lens — same room, same screen, so you are judging one variable.\n\nAlt A — smooth lens: no flutes. Cleaner and more app-like, but it loses most of what makes the glass read as glass.\n\nAlt B — no guard: the fluted lens unobstructed. More graphic and the flutes read better, but it drops the wire cage that gives it the rink-hardware character.\n\nMain keeps both: fluted lens behind the guard, like the real fixture."
+    }
+  ],
+  "launch": { "view": "canvas" }
+}

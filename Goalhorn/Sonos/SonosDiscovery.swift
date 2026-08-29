@@ -41,27 +41,37 @@ final class SonosDiscovery: ObservableObject {
         var found: [SonosDevice] = []
         var completed = 0
 
-        // Probe in bounded-concurrency batches so we don't open 254 sockets at once.
-        let batchSize = 24
-        for batch in hosts.chunked(into: batchSize) {
-            let results = await withTaskGroup(of: SonosDevice?.self) { group -> [SonosDevice] in
-                for host in batch {
-                    group.addTask { [session] in
-                        await Self.probe(host: host, session: session)
-                    }
-                }
-                var collected: [SonosDevice] = []
-                for await device in group where device != nil {
-                    collected.append(device!)
-                }
-                return collected
+        // A sliding window rather than discrete batches. Batching made every
+        // probe in a batch wait for that batch's slowest host, and a dead host
+        // only fails on the 1.2s timeout — so a mostly-empty subnet spent almost
+        // the whole scan idle. Topping the group up as each probe finishes keeps
+        // `maxInFlight` sockets busy start to finish.
+        let maxInFlight = 32
+        var next = 0
+
+        await withTaskGroup(of: SonosDevice?.self) { group in
+            while next < hosts.count && next < maxInFlight {
+                let host = hosts[next]
+                next += 1
+                group.addTask { [session] in await Self.probe(host: host, session: session) }
             }
 
-            found.append(contentsOf: results)
-            completed += batch.count
-            progress = Double(completed) / Double(hosts.count)
-            // Surface results as they come in.
-            devices = found.sorted { $0.roomName.localizedCaseInsensitiveCompare($1.roomName) == .orderedAscending }
+            while let result = await group.next() {
+                completed += 1
+                progress = Double(completed) / Double(hosts.count)
+
+                if let device = result {
+                    found.append(device)
+                    // Surface results as they come in.
+                    devices = found.sorted { $0.roomName.localizedCaseInsensitiveCompare($1.roomName) == .orderedAscending }
+                }
+
+                if next < hosts.count {
+                    let host = hosts[next]
+                    next += 1
+                    group.addTask { [session] in await Self.probe(host: host, session: session) }
+                }
+            }
         }
     }
 
@@ -101,15 +111,5 @@ extension String {
         let value = self[openRange.upperBound..<closeRange.lowerBound]
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
-    }
-}
-
-extension Array {
-    /// Splits the array into consecutive chunks of at most `size` elements.
-    func chunked(into size: Int) -> [[Element]] {
-        guard size > 0 else { return [self] }
-        return stride(from: 0, to: count, by: size).map {
-            Array(self[$0..<Swift.min($0 + size, count)])
-        }
     }
 }

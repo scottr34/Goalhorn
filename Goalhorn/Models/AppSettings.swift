@@ -16,6 +16,26 @@ enum AudioTarget: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// How long the goal song plays for.
+enum SongPlaybackMode: String, Codable, CaseIterable, Identifiable {
+    /// Let the track run to its end (the app's original behaviour).
+    case full
+    /// Stop when the light show does.
+    case matchLights
+    /// Stop after `AppSettings.songDuration` seconds.
+    case fixed
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .full: return "Play in full"
+        case .matchLights: return "Match light show"
+        case .fixed: return "Set length"
+        }
+    }
+}
+
 /// User-facing configuration, persisted to `UserDefaults`.
 ///
 /// This is the single source of truth for "which lights", "which song",
@@ -30,6 +50,9 @@ final class AppSettings: ObservableObject {
         static let selectedTrackID = "selectedTrackID"
         static let sonosDevice = "sonosDevice"
         static let sonosVolume = "sonosVolume"
+        static let goalColors = "goalColors"
+        static let songPlayback = "songPlayback"
+        static let songDuration = "songDuration"
     }
 
     /// How long the light show + horn runs, in seconds.
@@ -64,6 +87,26 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    /// The colours the beacon cycles through, in order. An entry may be a
+    /// "dark beat" (`isOff`), which is what makes red/off strobe.
+    @Published var goalColors: [GoalLightColor] {
+        didSet {
+            if let data = try? JSONEncoder().encode(goalColors) {
+                defaults.set(data, forKey: Key.goalColors)
+            }
+        }
+    }
+
+    /// How long the goal song runs for.
+    @Published var songPlayback: SongPlaybackMode {
+        didSet { defaults.set(songPlayback.rawValue, forKey: Key.songPlayback) }
+    }
+
+    /// Song length in seconds, used when `songPlayback` is `.fixed`.
+    @Published var songDuration: TimeInterval {
+        didSet { defaults.set(songDuration, forKey: Key.songDuration) }
+    }
+
     /// Volume (0–100) to set on Sonos before playing the horn.
     @Published var sonosVolume: Int {
         didSet { defaults.set(sonosVolume, forKey: Key.sonosVolume) }
@@ -76,6 +119,17 @@ final class AppSettings: ObservableObject {
         self.selectedLightIDs = Set((defaults.array(forKey: Key.selectedLightIDs) as? [String]) ?? [])
         self.audioTarget = AudioTarget(rawValue: defaults.string(forKey: Key.audioTarget) ?? "") ?? .sonos
         self.sonosVolume = defaults.object(forKey: Key.sonosVolume) as? Int ?? 45
+
+        self.songPlayback = SongPlaybackMode(rawValue: defaults.string(forKey: Key.songPlayback) ?? "") ?? .full
+        self.songDuration = defaults.object(forKey: Key.songDuration) as? TimeInterval ?? 20
+
+        if let data = defaults.data(forKey: Key.goalColors),
+           let colors = try? JSONDecoder().decode([GoalLightColor].self, from: data),
+           !colors.isEmpty {
+            self.goalColors = colors
+        } else {
+            self.goalColors = GoalLightColor.defaultSequence
+        }
 
         if let raw = defaults.string(forKey: Key.selectedTrackID) {
             self.selectedTrackID = UUID(uuidString: raw)
