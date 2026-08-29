@@ -44,6 +44,11 @@ struct LightsSettingsView: View {
             }
             .navigationTitle("Lights")
             .onAppear { homeKit.start() }
+            .onChange(of: homeKit.lights.count) { _, count in
+                // Lights just became available — put them back if a previous
+                // celebration was killed before it could clean up.
+                if count > 0 { celebration.restoreInterruptedShow() }
+            }
             .toolbar {
                 Button {
                     homeKit.refresh()

@@ -20,7 +20,7 @@ You bring your own goal song (upload any audio file) and your own smart lights.
 | Tab | What it does |
 | --- | --- |
 | **Goal** | A giant animated goal light. Tap it to fire the celebration; a **Stop** button ends it early. |
-| **Songs** | Upload goal songs (MP3/M4A/WAV/AIFF) and pick which one plays. |
+| **Songs** | Upload goal songs (MP3/M4A/WAV/AIFF), pick which one plays, and set how long it runs. |
 | **Sonos** | Choose the output (Sonos vs. iPhone), scan your Wi‑Fi for Sonos players, set the volume. |
 | **Lights** | Grant HomeKit access, choose which bulbs spin, build the colour sequence, set how long the show lasts, and run a **test**. |
 
@@ -119,10 +119,17 @@ Goalhorn/
 - **Sonos discovery is a subnet scan.** It assumes a `/24` home network. If your
   speaker isn't found, enter its IP manually (find it in the Sonos app under
   *Settings → System → About My System*).
-- **The song plays to its end.** The light show stops after the duration you
-  set; the goal song keeps playing on Sonos until it finishes (or you hit Stop).
+- **Song length is yours to set.** By default the song plays to its end. On the
+  Songs tab you can instead have it fade out with the light show, or after a
+  fixed number of seconds. Sonos has no fade of its own, so the app steps its
+  volume down and then restores the level you configured.
 - **HomeKit write latency.** Bulbs update as fast as HomeKit allows; a handful of
   color bulbs give the smoothest spin.
+- **Getting your lights back.** The show snapshots every bulb first and writes
+  that state back afterwards, waiting for its own in-flight writes to land,
+  retrying anything HomeKit rejects, and serialising overlapping shows. The
+  snapshot is also written to disk, so a celebration interrupted by the app
+  being killed is undone the next time the Lights tab loads.
 - **No bundled audio or app icon art.** Bring your own goal song; the app icon
   slot is left empty for you to drop in artwork.
 

@@ -9,7 +9,13 @@ import Combine
 /// red/blue by default, but red/white/blue, red/white or red/off all work. A
 /// step marked `isOff` is a dark beat: brightness drops to zero without a power
 /// cycle, which is the only way a strobe stays in time.
-/// When the show finishes (or is stopped) each light's previous state is restored.
+///
+/// **Putting the lights back is a first-class job, not a best effort.** Every
+/// bulb's state is read before the show and written back after it, and the
+/// restore path defends against the four ways that used to fail: a write from
+/// the animation loop landing *after* the restore, HomeKit rejecting a restore
+/// write, a second show starting before the first had finished restoring, and
+/// the app being killed mid-celebration. See `restore(_:lights:)`.
 ///
 /// HomeKit writes are slow and serialise per accessory, so the loop is built to
 /// send as few of them as possible: colour is written only when the step
@@ -24,7 +30,8 @@ final class GoalLightEngine: ObservableObject {
     private var generation = 0
 
     /// Snapshot of a light's characteristics so we can restore it afterwards.
-    private struct LightState {
+    /// `Codable` so an interrupted show can still be undone on the next launch.
+    private struct LightState: Codable {
         var power: Bool?
         var brightness: Int?
         var hue: Double?
@@ -38,32 +45,66 @@ final class GoalLightEngine: ObservableObject {
     /// Skip a brightness write unless the value moved at least this much; the
     /// bulbs at the back of the sweep otherwise get the same value every tick.
     private let brightnessEpsilon = 3
+    /// How long to wait for loop writes to land before restoring anyway.
+    private let drainTimeout: TimeInterval = 2
+
+    private let defaults: UserDefaults
+    private static let pendingRestoreKey = "pendingLightRestore"
+
+    /// Fire-and-forget writes still in flight, so the restore can wait them out.
+    private var outstandingWrites = 0
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
 
     func start(on lights: [GoalLight], colors: [GoalLightColor], duration: TimeInterval) {
         guard !lights.isEmpty else { return }
-        stop()
+
+        // Hold on to the outgoing run and wait for it below: if a second show
+        // started while the first was still restoring, the new capture would
+        // record beacon colours as the "previous" state and the bulbs would
+        // never get home.
+        let previous = task
+        previous?.cancel()
+
         generation += 1
         let runID = generation
         isRunning = true
         task = Task { [weak self] in
-            await self?.run(lights: lights, colors: colors, duration: duration)
-            guard let self, self.generation == runID else { return }
+            await previous?.value
+            guard let self, self.generation == runID, !Task.isCancelled else { return }
+            await self.run(lights: lights, colors: colors, duration: duration)
+            guard self.generation == runID else { return }
             self.isRunning = false
-            self.task = nil
         }
     }
 
     func stop() {
+        // Keep the task reference: the next `start` awaits it so the restore
+        // this cancellation kicks off is allowed to finish first.
         task?.cancel()
-        task = nil
         isRunning = false
+    }
+
+    /// Put the lights back after a show that never got to clean up — the app was
+    /// killed or crashed mid-celebration. Safe to call whenever lights load; it
+    /// does nothing when there is no unfinished show on record.
+    func restoreInterruptedShow(on lights: [GoalLight]) async {
+        guard hasPendingRestore else { return }
+        await restorePending(lights: lights)
     }
 
     // MARK: - Effect
 
     private func run(lights: [GoalLight], colors: [GoalLightColor], duration: TimeInterval) async {
+        // Undo any unfinished show first, so what we capture below is the user's
+        // own lighting rather than a half-finished beacon.
+        await restorePending(lights: lights)
+
         let palette = colors.isEmpty ? GoalLightColor.defaultSequence : colors
         let saved = await captureStates(lights)
+        persistPending(saved)
 
         // Prime: power on. Saturation is written with each colour step now that
         // white (saturation 0) is a legal step, so it is not set here.
@@ -71,7 +112,7 @@ final class GoalLightEngine: ObservableObject {
         for light in lights {
             if let power = light.power { primeWrites.append((true as Any, power)) }
         }
-        await writeAll(primeWrites)
+        _ = await writeAll(primeWrites)
 
         let start = DispatchTime.now()
         func elapsed() -> TimeInterval {
@@ -149,22 +190,35 @@ final class GoalLightEngine: ObservableObject {
         let characteristics = lights.flatMap { light in
             [light.power, light.brightness, light.hue, light.saturation].compactMap { $0 }
         }
-        await readAll(characteristics)
+        let readOK = await readAll(characteristics)
+
+        /// Only trust a value we actually managed to read — a failed read leaves
+        /// whatever HomeKit had cached, and restoring that is worse than
+        /// leaving the characteristic alone.
+        func value(of characteristic: HMCharacteristic?) -> Any? {
+            guard let characteristic, readOK.contains(ObjectIdentifier(characteristic)) else { return nil }
+            return characteristic.value
+        }
 
         var states: [String: LightState] = [:]
         states.reserveCapacity(lights.count)
         for light in lights {
             states[light.id] = LightState(
-                power: light.power?.value as? Bool,
-                brightness: (light.brightness?.value as? NSNumber)?.intValue,
-                hue: (light.hue?.value as? NSNumber)?.doubleValue,
-                saturation: (light.saturation?.value as? NSNumber)?.doubleValue
+                power: value(of: light.power) as? Bool,
+                brightness: (value(of: light.brightness) as? NSNumber)?.intValue,
+                hue: (value(of: light.hue) as? NSNumber)?.doubleValue,
+                saturation: (value(of: light.saturation) as? NSNumber)?.doubleValue
             )
         }
         return states
     }
 
     private func restore(_ states: [String: LightState], lights: [GoalLight]) async {
+        // Let the loop's fire-and-forget writes land first. Otherwise a
+        // brightness write queued on the final tick arrives after the restore
+        // and leaves the bulb sitting at beacon level.
+        await drainWrites()
+
         var appearance: [(Any, HMCharacteristic)] = []
         var power: [(Any, HMCharacteristic)] = []
 
@@ -178,44 +232,115 @@ final class GoalLightEngine: ObservableObject {
 
         // Colour and brightness together, then power — restoring power last stops
         // a light that was off from flashing its old colour on the way out.
-        await writeAll(appearance)
-        await writeAll(power)
+        await writeRetrying(appearance)
+        await writeRetrying(power)
+
+        clearPending()
+    }
+
+    // MARK: - Unfinished shows
+
+    private var hasPendingRestore: Bool { defaults.data(forKey: Self.pendingRestoreKey) != nil }
+
+    private func persistPending(_ states: [String: LightState]) {
+        guard let data = try? JSONEncoder().encode(states) else { return }
+        defaults.set(data, forKey: Self.pendingRestoreKey)
+    }
+
+    private func clearPending() {
+        defaults.removeObject(forKey: Self.pendingRestoreKey)
+    }
+
+    /// Restore a snapshot left behind by a show that never finished.
+    private func restorePending(lights: [GoalLight]) async {
+        guard
+            let data = defaults.data(forKey: Self.pendingRestoreKey),
+            let states = try? JSONDecoder().decode([String: LightState].self, from: data)
+        else {
+            clearPending()
+            return
+        }
+        // Only clear once the writes have gone out, so a second interruption
+        // does not lose the snapshot.
+        await restore(states, lights: lights)
     }
 
     // MARK: - Characteristic I/O
 
-    /// Fire-and-forget write, used inside the animation loop for speed.
+    /// Fire-and-forget write, used inside the animation loop for speed. The
+    /// count lets `restore` wait for these to land before it writes.
     private func fireWrite(_ value: Any, to characteristic: HMCharacteristic?) {
-        characteristic?.writeValue(value) { _ in }
+        guard let characteristic else { return }
+        outstandingWrites += 1
+        characteristic.writeValue(value) { _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.outstandingWrites = max(0, self.outstandingWrites - 1)
+            }
+        }
     }
 
-    /// Issue every write at once and wait for the last one. HomeKit delivers
-    /// these completions on the main queue, and this type is main-actor bound,
-    /// so the counter needs no further synchronisation.
-    private func writeAll(_ writes: [(Any, HMCharacteristic)]) async {
-        guard !writes.isEmpty else { return }
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+    /// Wait for loop writes to land, giving up after `drainTimeout` so an
+    /// unreachable bulb cannot stall the restore forever.
+    private func drainWrites() async {
+        let deadline = DispatchTime.now().uptimeNanoseconds + UInt64(drainTimeout * 1_000_000_000)
+        while outstandingWrites > 0 && DispatchTime.now().uptimeNanoseconds < deadline {
+            await pause(0.03)
+        }
+    }
+
+    /// Issue every write at once and report whatever HomeKit rejected. Writes
+    /// complete on the main queue and this type is main-actor bound, so the
+    /// counters need no further synchronisation.
+    private func writeAll(_ writes: [(Any, HMCharacteristic)]) async -> [(Any, HMCharacteristic)] {
+        guard !writes.isEmpty else { return [] }
+        return await withCheckedContinuation { (continuation: CheckedContinuation<[(Any, HMCharacteristic)], Never>) in
             var remaining = writes.count
+            var failed: [(Any, HMCharacteristic)] = []
             for (value, characteristic) in writes {
-                characteristic.writeValue(value) { _ in
+                characteristic.writeValue(value) { error in
+                    if error != nil { failed.append((value, characteristic)) }
                     remaining -= 1
-                    if remaining == 0 { continuation.resume() }
+                    if remaining == 0 { continuation.resume(returning: failed) }
                 }
             }
         }
     }
 
-    /// As `writeAll`, for reads. Values are then read off each characteristic.
-    private func readAll(_ characteristics: [HMCharacteristic]) async {
-        guard !characteristics.isEmpty else { return }
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+    /// Write, then retry whatever failed. Accessories routinely reject a write
+    /// straight after a burst of them, and a dropped restore is exactly what
+    /// leaves a bulb stuck on beacon red.
+    private func writeRetrying(_ writes: [(Any, HMCharacteristic)], attempts: Int = 3) async {
+        var pending = writes
+        for attempt in 0..<attempts {
+            if pending.isEmpty { return }
+            if attempt > 0 { await pause(0.3 * Double(attempt)) }
+            pending = await writeAll(pending)
+        }
+    }
+
+    /// Reads in one batch, returning the characteristics that actually answered.
+    private func readAll(_ characteristics: [HMCharacteristic]) async -> Set<ObjectIdentifier> {
+        guard !characteristics.isEmpty else { return [] }
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Set<ObjectIdentifier>, Never>) in
             var remaining = characteristics.count
+            var succeeded: Set<ObjectIdentifier> = []
             for characteristic in characteristics {
-                characteristic.readValue { _ in
+                characteristic.readValue { error in
+                    if error == nil { succeeded.insert(ObjectIdentifier(characteristic)) }
                     remaining -= 1
-                    if remaining == 0 { continuation.resume() }
+                    if remaining == 0 { continuation.resume(returning: succeeded) }
                 }
             }
+        }
+    }
+
+    /// A sleep that still sleeps when the surrounding task is cancelled. The
+    /// restore path usually runs *because* the show was cancelled, so it cannot
+    /// use `Task.sleep` — that would return instantly and spin.
+    private func pause(_ seconds: TimeInterval) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { continuation.resume() }
         }
     }
 }

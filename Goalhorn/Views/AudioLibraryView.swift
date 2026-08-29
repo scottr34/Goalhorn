@@ -11,6 +11,43 @@ struct AudioLibraryView: View {
     @State private var renaming: AudioTrack?
     @State private var newName: String = ""
 
+    private var songLengthSection: some View {
+        Section {
+            Picker("Length", selection: $settings.songPlayback) {
+                ForEach(SongPlaybackMode.allCases) { mode in
+                    Text(mode.displayName).tag(mode)
+                }
+            }
+            if settings.songPlayback == .fixed {
+                VStack(alignment: .leading) {
+                    HStack {
+                        Text("Stop after")
+                        Spacer()
+                        Text("\(Int(settings.songDuration))s")
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                    Slider(value: $settings.songDuration, in: 5...120, step: 1)
+                }
+            }
+        } header: {
+            Text("Song Length")
+        } footer: {
+            Text(songLengthFooter)
+        }
+    }
+
+    private var songLengthFooter: String {
+        switch settings.songPlayback {
+        case .full:
+            return "The song plays to its end. The light show still stops after \(Int(settings.celebrationDuration))s."
+        case .matchLights:
+            return "The song fades out with the light show, after \(Int(settings.celebrationDuration))s."
+        case .fixed:
+            return "The song fades out after \(Int(settings.songDuration))s, whatever the light show is doing."
+        }
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -23,6 +60,8 @@ struct AudioLibraryView: View {
                 } footer: {
                     Text("Import MP3, M4A, WAV, or AIFF files. The selected song plays when you trigger the horn.")
                 }
+
+                songLengthSection
 
                 if audioLibrary.tracks.isEmpty {
                     Section {
