@@ -28,6 +28,24 @@ extension Color {
 enum Fixture {
     static let refW: CGFloat = 440
     static let refH: CGFloat = 740
+
+    /// SVG radial gradients are placed in the *shape's* bounding box; a SwiftUI
+    /// shape fill is placed in the shape's FRAME, which here is the whole 440 x
+    /// 740 box. These convert, so the lit core lands inside the lens instead of
+    /// below it.
+    static func lensPoint(_ bx: CGFloat, _ by: CGFloat) -> UnitPoint {
+        UnitPoint(
+            x: ((cx - rLens) + bx * (rLens * 2)) / refW,
+            y: (yApex + by * (yLensBot - yApex)) / refH
+        )
+    }
+
+    /// A radius fraction of the lens box, in reference points.
+    static func lensRadius(_ fraction: CGFloat) -> CGFloat {
+        let w = rLens * 2
+        let h = yLensBot - yApex
+        return fraction * sqrt(w * w + h * h) / 2
+    }
     static let aspect: CGFloat = refH / refW
 
     static let cx: CGFloat = 220
@@ -274,14 +292,16 @@ private struct FixtureView: View {
     private var lens: some View {
         ZStack {
             LensShape().fill(
-                RadialGradient(gradient: Fixture.lensDark, center: UnitPoint(x: 0.40, y: 0.30),
-                               startRadius: 0, endRadius: 250)
+                RadialGradient(gradient: Fixture.lensDark,
+                               center: Fixture.lensPoint(0.40, 0.30),
+                               startRadius: 0, endRadius: Fixture.lensRadius(0.90))
             )
 
             if let lit, !lit.isOff {
                 LensShape().fill(
-                    RadialGradient(gradient: Fixture.lensLit(lit), center: UnitPoint(x: 0.50, y: 0.60),
-                                   startRadius: 0, endRadius: 265)
+                    RadialGradient(gradient: Fixture.lensLit(lit),
+                                   center: Fixture.lensPoint(0.50, 0.60),
+                                   startRadius: 0, endRadius: Fixture.lensRadius(0.95))
                 )
                 .transition(.opacity)
             }

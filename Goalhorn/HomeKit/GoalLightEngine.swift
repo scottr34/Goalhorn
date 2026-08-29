@@ -106,13 +106,23 @@ final class GoalLightEngine: ObservableObject {
         let saved = await captureStates(lights)
         persistPending(saved)
 
-        // Prime: power on. Saturation is written with each colour step now that
-        // white (saturation 0) is a legal step, so it is not set here.
+        // Prime: power on AND put the bulbs into colour mode before the first
+        // beat. A colour bulb sitting in colour-temperature mode ignores hue
+        // until it gets a saturation write and just shows warm white — which is
+        // why a red sequence came out yellow. Awaited, so it has landed before
+        // the loop starts writing brightness over the top of it.
+        let firstLit = palette.first(where: { !$0.isOff }) ?? .red
         var primeWrites: [(Any, HMCharacteristic)] = []
         for light in lights {
             if let power = light.power { primeWrites.append((true as Any, power)) }
+            if let saturation = light.saturation {
+                primeWrites.append((light.clampSaturation(firstLit.saturation) as Any, saturation))
+            }
+            if let hue = light.hue {
+                primeWrites.append((light.clampHue(firstLit.hue) as Any, hue))
+            }
         }
-        _ = await writeAll(primeWrites)
+        await writeRetrying(primeWrites)
 
         let start = DispatchTime.now()
         func elapsed() -> TimeInterval {
@@ -121,6 +131,7 @@ final class GoalLightEngine: ObservableObject {
 
         var lastStepIndex = -1
         var lastBrightness = [Int](repeating: -1, count: lights.count)
+        var poweredOff = false
         let n = max(lights.count, 1)
         var tick = 0
 
@@ -134,33 +145,44 @@ final class GoalLightEngine: ObservableObject {
 
             // Colour only moves a few times a second, and only then is it written.
             if stepIndex != lastStepIndex {
-                if !step.isOff {
+                if step.isOff {
+                    // Cut power for a dark beat. Dropping brightness alone is not
+                    // enough: most bulbs floor at 1, so they stay dimly lit.
+                    for light in lights { fireWrite(false, to: light.power) }
+                    poweredOff = true
+                } else {
+                    if poweredOff {
+                        for light in lights { fireWrite(true, to: light.power) }
+                        poweredOff = false
+                        // The bulbs came back at whatever level they were; make
+                        // the next brightness write unconditional.
+                        for index in lastBrightness.indices { lastBrightness[index] = -1 }
+                    }
+                    // Saturation first: that is the write that takes a bulb out
+                    // of white mode, and hue means nothing until it has.
                     for light in lights {
-                        fireWrite(step.hue, to: light.hue)
-                        fireWrite(step.saturation, to: light.saturation)
+                        fireWrite(light.clampSaturation(step.saturation), to: light.saturation)
+                        fireWrite(light.clampHue(step.hue), to: light.hue)
                     }
                 }
                 lastStepIndex = stepIndex
             }
 
-            // Sweep the brightness "beam" around the ring of lights.
-            for (index, light) in lights.enumerated() {
-                let target: Int
-                if step.isOff {
-                    target = 0
-                } else {
+            // Sweep the brightness "beam" around the ring of lights. Nothing to
+            // do on a dark beat: the bulbs are powered off.
+            if !step.isOff {
+                for (index, light) in lights.enumerated() {
                     let slot = Double(index) / Double(n)
                     let distance = circularDistance(beamPos, slot)
                     // Sharp falloff so one bulb clearly leads the sweep.
                     let intensity = pow(max(0, 1 - distance * Double(n) * 0.6), 2)
-                    target = Int(12 + 88 * intensity)
-                }
+                    let target = light.clampBrightness(Int(12 + 88 * intensity))
 
-                let previous = lastBrightness[index]
-                let crossesDark = (target == 0) != (previous == 0)
-                guard target != previous, crossesDark || abs(target - previous) >= brightnessEpsilon else { continue }
-                fireWrite(target, to: light.brightness)
-                lastBrightness[index] = target
+                    let previous = lastBrightness[index]
+                    guard target != previous, abs(target - previous) >= brightnessEpsilon else { continue }
+                    fireWrite(target, to: light.brightness)
+                    lastBrightness[index] = target
+                }
             }
 
             // Sleep to an absolute deadline so ticks do not drift by the time

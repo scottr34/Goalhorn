@@ -56,6 +56,36 @@ final class GoalLight: Identifiable {
     /// A light we can spin colours on needs hue + saturation; otherwise we can
     /// still strobe brightness/power.
     var supportsColor: Bool { hue != nil && saturation != nil }
+
+    // Accessories advertise their own ranges and reject anything outside them.
+    // Brightness in particular often has a minimum of 1, not 0, so a write of 0
+    // is simply dropped and the bulb never goes dark.
+    private static func range(of characteristic: HMCharacteristic?, fallback: ClosedRange<Double>) -> ClosedRange<Double> {
+        guard
+            let metadata = characteristic?.metadata,
+            let low = metadata.minimumValue?.doubleValue,
+            let high = metadata.maximumValue?.doubleValue,
+            low < high
+        else { return fallback }
+        return low...high
+    }
+
+    var brightnessRange: ClosedRange<Double> { Self.range(of: brightness, fallback: 0...100) }
+    var hueRange: ClosedRange<Double> { Self.range(of: hue, fallback: 0...360) }
+    var saturationRange: ClosedRange<Double> { Self.range(of: saturation, fallback: 0...100) }
+
+    /// The dimmest this bulb will actually accept — its "off" for a dark beat.
+    var minBrightness: Int { Int(brightnessRange.lowerBound.rounded()) }
+
+    func clampBrightness(_ value: Int) -> Int {
+        Int(min(max(Double(value), brightnessRange.lowerBound), brightnessRange.upperBound).rounded())
+    }
+    func clampHue(_ value: Double) -> Double {
+        min(max(value, hueRange.lowerBound), hueRange.upperBound)
+    }
+    func clampSaturation(_ value: Double) -> Double {
+        min(max(value, saturationRange.lowerBound), saturationRange.upperBound)
+    }
 }
 
 /// One HomeKit room's lights, so the picker can be grouped the way the Home app
