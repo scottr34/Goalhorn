@@ -134,6 +134,10 @@ Goalhorn/
   being killed is undone the next time the Lights tab loads.
 - **No bundled audio or app icon art.** Bring your own goal song; the app icon
   slot is left empty for you to drop in artwork.
+- **The Goal screen follows `design/main-screen/`.** That folder holds the
+  design canvas the screen was drawn from (HTML artboards, not app code);
+  `Views/GoalLightView.swift` is the SwiftUI port of the fixture in it. Change
+  the shape in one and mirror it in the other.
 
 ## Roadmap ideas
 
